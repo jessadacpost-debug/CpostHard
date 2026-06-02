@@ -739,6 +739,10 @@ export default function App() {
             const ownerDraftId = fz.assignedDraftId || p.draftId;
             if (ownerDraftId !== currentUser.id) return;
 
+            // -------- เพิ่มบรรทัดนี้เพื่อข้ามงานที่เสร็จแล้ว --------
+            if (COMPLETED_STATUSES.has(fz.status)) return;
+            // --------------------------------------------------
+
             const risk = getDelayRisk(fz);
             const baseTask = {
               ...fz,
@@ -762,6 +766,12 @@ export default function App() {
         }
       });
 
+    const source = urgentList.length > 0 ? urgentList : readyList;
+    return source.sort((a, b) => {
+      if (b.weight !== a.weight) return b.weight - a.weight;
+      return new Date(a.deadline || '2999-12-31') - new Date(b.deadline || '2999-12-31');
+    });
+  };
     const source = urgentList.length > 0 ? urgentList : readyList;
     return source.sort((a, b) => {
       if (b.weight !== a.weight) return b.weight - a.weight;
