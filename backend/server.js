@@ -138,11 +138,11 @@ function normalizeNullableDate(value) {
 }
 
 function isCompletedStatus(status) {
-  return status === 'เธกเธตเนเธเธ Shop เนเธฅเนเธง' || status === 'เธญเธญเธเธเธญเธเนเธฅเนเธง';
+  return status === 'มีแบบ Shop แล้ว' || status === 'ออกของแล้ว';
 }
 
 function isReadyForShopStatus(status) {
-  return status === 'เธเธฃเนเธญเธกเธ—เธณ Shop';
+  return status === 'พร้อมทำ Shop';
 }
 
 function getNaturalFloorSortValue(name) {
