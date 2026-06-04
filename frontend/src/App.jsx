@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  LayoutDashboard, 
-  Layers, 
-  Users, 
-  Clock, 
-  Flame, 
-  CheckCircle2, 
-  Plus, 
-  Settings as SettingsIcon, 
-  Activity, 
+import {
+  LayoutDashboard,
+  Layers,
+  Users,
+  Clock,
+  Flame,
+  CheckCircle2,
+  Plus,
+  Settings as SettingsIcon,
+  Activity,
   ArrowRight,
   Info,
   Calendar,
@@ -38,6 +38,28 @@ import {
   Sliders,
   Spline
 } from 'lucide-react';
+// --- นำเข้า Library สำหรับปฏิทิน และ Drag & Drop ---
+import { Calendar as BigCalendar, dateFnsLocalizer, Views } from 'react-big-calendar';
+import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'; // เพิ่ม Drag & Drop
+import format from 'date-fns/format';
+import parse from 'date-fns/parse';
+import startOfWeek from 'date-fns/startOfWeek';
+import getDay from 'date-fns/getDay';
+import th from 'date-fns/locale/th';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
+import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'; // สไตล์ของลากวาง
+
+const locales = { 'th': th };
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
+  getDay,
+  locales,
+});
+
+// หุ้มปฏิทินด้วยฟังก์ชันลากวาง
+const DnDCalendar = withDragAndDrop(BigCalendar);
 
 // Prefer same-origin API so Vite proxy and backend-served frontend both work.
 // Override with VITE_API_BASE only when frontend is hosted separately.
@@ -101,7 +123,46 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(
     localStorage.getItem('syncdraft_user') ? JSON.parse(localStorage.getItem('syncdraft_user')) : null
   );
+  // --- State สำหรับระบบ Filter ในหน้า Workspace (ข้อ 4) ---
+  const [wsSearch, setWsSearch] = useState('');
+  const [wsFilterEng, setWsFilterEng] = useState('ALL');
+  const [wsFilterDraft, setWsFilterDraft] = useState('ALL');
+  const [wsFilterStatus, setWsFilterStatus] = useState('ALL');
 
+  // --- State สำหรับเปิดหน้าต่าง Modal ดูรายละเอียดปฏิทิน (ข้อ 3) ---
+  const [selectedEvent, setSelectedEvent] = useState(null);
+
+  // --- ฟังก์ชันย่อชื่อดร๊าฟ (ข้อ 2) ---
+  const getInitials = (name) => {
+    if (!name) return '??';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) return `${parts[0][0]}.${parts[1][0]}`;
+    return name.substring(0, 2);
+  };
+
+  // --- State สำหรับ Filter ในหน้าปฏิทิน ---
+  const [calendarFilterEng, setCalendarFilterEng] = useState('ALL');
+  const [calendarFilterDraft, setCalendarFilterDraft] = useState('ALL');
+
+  // --- ฟังก์ชันจัดการเมื่อมีการลาก-วาง (Drag & Drop) บนปฏิทิน ---
+  const handleEventDrop = async ({ event, start, end, resourceId }) => {
+    // หาว่าลากงานของโปรเจกต์ไหน โซนไหน
+    const projIndex = projects.findIndex(p => p.id === event.projectId);
+    if (projIndex === -1) return;
+
+    const zoneIndex = projects[projIndex].floorZones.findIndex(fz => fz.id === event.zoneId);
+    if (zoneIndex === -1) return;
+
+    // อัปเดตข้อมูลจำลองบน Frontend ก่อน (Optimistic Update)
+    const updatedProjects = [...projects];
+    updatedProjects[projIndex].floorZones[zoneIndex] = {
+      ...updatedProjects[projIndex].floorZones[zoneIndex],
+      deadline: start.toISOString().split('T')[0],
+      assignedDraftId: resourceId || updatedProjects[projIndex].floorZones[zoneIndex].assignedDraftId
+    };
+
+    setProjects(updatedProjects);
+  };
   // Core States
   const [activeTab, setActiveTab] = useState('workspace'); // 'workspace', 'dashboard', 'recovery', 'admin'
   const [projects, setProjects] = useState([]);
@@ -130,7 +191,7 @@ export default function App() {
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
   const [isEditUserOpen, setIsEditUserOpen] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState(null);
-  
+
   // User Form States (Create/Edit)
   const [userFormName, setUserFormName] = useState('');
   const [userFormEmail, setUserFormEmail] = useState('');
@@ -588,6 +649,7 @@ export default function App() {
           password: userFormPassword
         })
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'สร้างผู้ใช้งานล้มเหลว');
 
@@ -675,8 +737,8 @@ export default function App() {
   // Filter project workspace according to CURRENT authenticated user
   const activeProjectsFiltered = projects.filter(proj => {
     const matchesQuery = proj.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          proj.projectNumber.toLowerCase().includes(searchQuery.toLowerCase());
-    
+      proj.projectNumber.toLowerCase().includes(searchQuery.toLowerCase());
+
     if (!matchesQuery) return false;
 
     if (filterOnlyMyWork && currentUser && currentUser.role !== 'admin') {
@@ -739,10 +801,6 @@ export default function App() {
             const ownerDraftId = fz.assignedDraftId || p.draftId;
             if (ownerDraftId !== currentUser.id) return;
 
-            // -------- เพิ่มบรรทัดนี้เพื่อข้ามงานที่เสร็จแล้ว --------
-            if (COMPLETED_STATUSES.has(fz.status)) return;
-            // --------------------------------------------------
-
             const risk = getDelayRisk(fz);
             const baseTask = {
               ...fz,
@@ -766,12 +824,6 @@ export default function App() {
         }
       });
 
-    const source = urgentList.length > 0 ? urgentList : readyList;
-    return source.sort((a, b) => {
-      if (b.weight !== a.weight) return b.weight - a.weight;
-      return new Date(a.deadline || '2999-12-31') - new Date(b.deadline || '2999-12-31');
-    });
-  };
     const source = urgentList.length > 0 ? urgentList : readyList;
     return source.sort((a, b) => {
       if (b.weight !== a.weight) return b.weight - a.weight;
@@ -823,7 +875,7 @@ export default function App() {
     return (
       <div className="min-height-screen w-full flex items-center justify-center bg-[#0b0f19] px-4 py-20 font-sans" style={{ minHeight: '100vh' }}>
         <div className="w-full max-w-md glass-panel p-8 rounded-2xl border border-slate-800 shadow-2xl animate-scaleUp">
-          
+
           <div className="text-center mb-8">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-brand-600 to-cyan-400 flex items-center justify-center font-bold text-2xl text-white shadow-lg shadow-brand-500/20 mb-4 animate-pulse-dot">
               ⚡
@@ -847,10 +899,10 @@ export default function App() {
               <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                 <Mail className="h-3 w-3 text-brand-400" /> อีเมลผู้ใช้
               </label>
-              <input 
-                type="email" 
-                required 
-                placeholder="email@syncdraft.com" 
+              <input
+                type="email"
+                required
+                placeholder="email@syncdraft.com"
                 className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
@@ -861,18 +913,18 @@ export default function App() {
               <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                 <Lock className="h-3 w-3 text-brand-400" /> รหัสผ่าน
               </label>
-              <input 
-                type="password" 
-                required 
-                placeholder="••••••" 
+              <input
+                type="password"
+                required
+                placeholder="••••••"
                 className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 animate-fadeIn"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
               />
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={isLoggingIn}
               className="w-full py-3 bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white font-bold rounded-lg transition-all shadow-lg shadow-brand-500/20 text-sm mt-6 flex items-center justify-center gap-2"
             >
@@ -917,9 +969,9 @@ export default function App() {
           <p className="text-slate-600 text-[10px] mt-1">(Render free tier ใช้เวลาประมาณ 30-60 วินาที)</p>
         </div>
         <div className="flex gap-1.5 mt-2">
-          <span className="w-2 h-2 bg-brand-500 rounded-full animate-bounce" style={{animationDelay:'0ms'}}></span>
-          <span className="w-2 h-2 bg-brand-400 rounded-full animate-bounce" style={{animationDelay:'150ms'}}></span>
-          <span className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay:'300ms'}}></span>
+          <span className="w-2 h-2 bg-brand-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+          <span className="w-2 h-2 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+          <span className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
         </div>
       </div>
     );
@@ -935,7 +987,7 @@ export default function App() {
         <div className="text-center max-w-sm">
           <p className="text-slate-200 font-bold text-base">ไม่สามารถเชื่อมต่อ Backend ได้</p>
           <p className="text-slate-500 text-xs mt-2 leading-relaxed">
-            Render อาจยังไม่ตื่น (cold start) หรือ network มีปัญหา<br/>
+            Render อาจยังไม่ตื่น (cold start) หรือ network มีปัญหา<br />
             กรุณากด Retry อีกครั้ง
           </p>
           <p className="text-rose-400/70 text-[10px] mt-2 font-mono">{error}</p>
@@ -962,9 +1014,10 @@ export default function App() {
 
   return (
     <div className="font-sans min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col selection:bg-brand-500 selection:text-white pb-20">
-      
+
       {/* Dynamic styles injected for floor cards */}
-      <style dangerouslySetInnerHTML={{__html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         .s-waiting { border-color: rgba(100,116,139,0.3) !important; background: rgba(30,41,59,0.2) !important; }
         .s-revise { border-color: rgba(244,63,94,0.3) !important; background: rgba(244,63,94,0.06) !important; }
         .s-ready { border-color: rgba(34,211,238,0.3) !important; background: rgba(34,211,238,0.06) !important; }
@@ -975,7 +1028,7 @@ export default function App() {
 
       {/* HEADER CONTROL BAR */}
       <header className="sticky top-0 z-40 bg-[#0b0f19]/85 backdrop-blur-xl border-b border-slate-900 py-3 px-6 flex flex-wrap items-center justify-between gap-4">
-        
+
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-400 flex items-center justify-center font-bold text-xl text-white shadow-md shadow-brand-500/20">
             ⚡
@@ -993,7 +1046,7 @@ export default function App() {
               <span className="text-xs font-bold text-slate-200 block">{currentUser.name}</span>
               <span className="text-[9px] font-bold text-brand-400 uppercase tracking-widest block">{currentUser.role}</span>
             </div>
-            <button 
+            <button
               onClick={handleLogout}
               className="p-1 text-slate-400 hover:text-rose-400 rounded-lg transition-all"
               title="ออกจากระบบ"
@@ -1006,42 +1059,44 @@ export default function App() {
 
       {/* BODY CONTENT CONTAINER */}
       <div className="max-w-[1320px] w-full mx-auto px-6 mt-8 flex-grow">
-        
+
         {/* NAV TABS SELECTOR */}
         <div className="flex justify-between items-center border-b border-slate-900 mb-8 overflow-x-auto">
           <div className="flex gap-8">
-            <button 
+            <button
               onClick={() => setActiveTab('workspace')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${
-                activeTab === 'workspace' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
+              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'workspace' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
             >
               <Layers className="h-4 w-4" /> แผงควบคุมงาน (Workspace)
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('dashboard')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${
-                activeTab === 'dashboard' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
+              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'dashboard' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
             >
               <LayoutDashboard className="h-4 w-4" /> แดชบอร์ดวิเคราะห์ (Dashboard)
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('recovery')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${
-                activeTab === 'recovery' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
+              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'recovery' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
             >
               <RefreshCw className="h-4 w-4" /> ถังขยะกู้คืนข้อมูล (Restoration)
             </button>
-
+            <button
+              onClick={() => setActiveTab('calendar')}
+              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'calendar' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+            >
+              <Calendar className="h-4 w-4" /> กระดานปฏิทิน (Timeline)
+            </button>
             {/* Admin back-office tab: Visible strictly to admin */}
             {currentUser && currentUser.role === 'admin' && (
-              <button 
+              <button
                 onClick={() => setActiveTab('admin')}
-                className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${
-                  activeTab === 'admin' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
+                className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'admin' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
               >
                 <SettingsIcon className="h-4 w-4" /> ระบบหลังบ้าน Admin (Settings)
               </button>
@@ -1052,19 +1107,17 @@ export default function App() {
           {activeTab === 'workspace' && currentUser && currentUser.role !== 'admin' && (
             <div className="flex items-center gap-2 mb-3 bg-slate-900/60 p-1.5 rounded-xl border border-slate-800">
               <span className="text-[10px] text-slate-500 font-semibold px-2">กรองงาน:</span>
-              <button 
+              <button
                 onClick={() => setFilterOnlyMyWork(true)}
-                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
-                  filterOnlyMyWork ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                }`}
+                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${filterOnlyMyWork ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                  }`}
               >
                 งานของฉัน
               </button>
-              <button 
+              <button
                 onClick={() => setFilterOnlyMyWork(false)}
-                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
-                  !filterOnlyMyWork ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                }`}
+                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${!filterOnlyMyWork ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                  }`}
               >
                 งานทั้งหมด
               </button>
@@ -1075,16 +1128,71 @@ export default function App() {
         {/* TAB 1: ACCORDION WORKSPACE */}
         {activeTab === 'workspace' && (
           <div className="space-y-6 animate-fadeIn">
-            
-            {/* Auto workload alert warning */}
-            {myStressWarningMessage && (
-              <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-2xl flex items-start gap-3 animate-fadeIn text-left">
-                <AlertTriangle className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-rose-300 font-semibold leading-relaxed">
-                  {myStressWarningMessage}
-                </p>
+            {/* 👇👇 แถบเครื่องมือ Filter & Search (ข้อ 4) 👇👇 */}
+            <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex flex-wrap gap-4 items-center bg-slate-900/50">
+              {/* ช่องค้นหา */}
+              <div className="flex-1 min-w-[200px] relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="text" placeholder="ค้นหาเลขที่ หรือชื่อโครงการ..."
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:border-brand-500 outline-none"
+                  value={wsSearch} onChange={(e) => setWsSearch(e.target.value)}
+                />
               </div>
-            )}
+              {/* กรองวิศวกร */}
+              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
+                value={wsFilterEng} onChange={(e) => setWsFilterEng(e.target.value)}>
+                <option value="ALL">👨‍🔧 วิศวกรทั้งหมด</option>
+                {users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+              {/* กรองดร๊าฟ */}
+              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
+                value={wsFilterDraft} onChange={(e) => setWsFilterDraft(e.target.value)}>
+                <option value="ALL">📐 ดร๊าฟทั้งหมด</option>
+                {users.filter(u => u.role === 'draft').map(u => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+              {/* กรองสถานะ */}
+              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
+                value={wsFilterStatus} onChange={(e) => setWsFilterStatus(e.target.value)}>
+                <option value="ALL">📌 ทุกสถานะ</option>
+                <option value="รอ Framing">รอ Framing</option>
+                <option value="กำลังทำ Shop">กำลังทำ Shop</option>
+                <option value="มีแบบ Shop แล้ว">มีแบบ Shop แล้ว</option>
+                <option value="ออกของแล้ว">ออกของแล้ว</option>
+              </select>
+            </div>
+            {/* 👆👆 สิ้นสุดแถบ Filter 👆👆 */}
+            {/* ตรงนี้คือการนำ Filter มาใช้กับลูปโปรเจกต์เดิม */}
+            {projects
+              .filter(p => !p.isArchived)
+              .filter(p => {
+                // โลจิกการกรอง (Search, วิศวกร, ดร๊าฟ, สถานะ)
+                const searchMatch = !wsSearch || p.projectNumber.toLowerCase().includes(wsSearch.toLowerCase()) || (p.name && p.name.toLowerCase().includes(wsSearch.toLowerCase()));
+                const engMatch = wsFilterEng === 'ALL' || p.engineerId === parseInt(wsFilterEng);
+                const zoneMatch = p.floorZones.some(fz => {
+                  const draftMatch = wsFilterDraft === 'ALL' || (fz.assignedDraftId || p.draftId) === parseInt(wsFilterDraft);
+                  const statusMatch = wsFilterStatus === 'ALL' || fz.status === wsFilterStatus;
+                  return draftMatch && statusMatch;
+                });
+                // ถ้าค้นหาไม่ตรง หรือไม่มีโซนไหนตรงกับสถานะ/ดร๊าฟเลย ให้ซ่อน
+                if (!searchMatch || !engMatch || (wsFilterDraft !== 'ALL' || wsFilterStatus !== 'ALL' ? !zoneMatch : false)) return false;
+                return true;
+              })
+              .map((project) => (
+                // ... โค้ดกล่อง Project เดิมของคุณ <div key={project.id} className="..."> ...
+                {/* Auto workload alert warning */ }
+            { myStressWarningMessage && (
+                  <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-2xl flex items-start gap-3 animate-fadeIn text-left">
+                    <AlertTriangle className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-rose-300 font-semibold leading-relaxed">
+                      {myStressWarningMessage}
+                    </p>
+                  </div>
+                )}
 
             {/* Checklist guide desk (เรียงลำดับคิวงานเดดไลน์ด่วนที่สุด) */}
             {currentUser && currentUser.role === 'draft' && draftChecklistData.length > 0 && (
@@ -1107,9 +1215,8 @@ export default function App() {
                         <p className="text-[10px] text-slate-400 mt-1">เดดไลน์: {item.deadline}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className={`text-[8.5px] px-1.5 py-0.5 rounded font-extrabold ${
-                          item.delayRisk === 'OVERDUE' ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-amber-500/20 text-amber-400'
-                        }`}>
+                        <span className={`text-[8.5px] px-1.5 py-0.5 rounded font-extrabold ${item.delayRisk === 'OVERDUE' ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-amber-500/20 text-amber-400'
+                          }`}>
                           {item.delayRisk}
                         </span>
                         <button
@@ -1128,15 +1235,15 @@ export default function App() {
             {/* Control Bar */}
             <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 flex-grow max-w-xl">
-                <input 
-                  type="text" 
-                  placeholder="ค้นหาเลขโครงการ, ชื่อโครงการ..." 
+                <input
+                  type="text"
+                  placeholder="ค้นหาเลขโครงการ, ชื่อโครงการ..."
                   className="glass-input px-4 py-2 text-sm rounded-lg w-full text-slate-200"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
-                
-                <select 
+
+                <select
                   className="glass-input px-3 py-2 text-xs rounded-lg text-slate-350"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
@@ -1163,7 +1270,7 @@ export default function App() {
               </div>
 
               {currentUser && currentUser.role === 'engineer' && (
-                <button 
+                <button
                   onClick={() => {
                     const currentDrf = users.find(u => u.role === 'draft');
                     if (currentUser?.role === 'engineer') {
@@ -1196,9 +1303,9 @@ export default function App() {
 
                   return (
                     <div key={proj.id} className="glass-panel rounded-xl border border-slate-800/80 overflow-hidden">
-                      
+
                       {/* Project Header Info */}
-                      <div 
+                      <div
                         onClick={() => toggleAccordion(proj.id)}
                         className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-4 bg-slate-900/40 hover:bg-slate-900/60 transition-all cursor-pointer select-none text-left"
                       >
@@ -1219,9 +1326,9 @@ export default function App() {
                             <span><strong className="text-slate-500">วิศวกร:</strong> {proj.engineer?.name}</span>
                             <span><strong className="text-slate-500">ดร๊าฟ:</strong> {proj.draft?.name}</span>
                           </div>
-                          
+
                           {proj.floorZones && proj.floorZones.some(fz => fz.status === 'มีแบบ Shop แล้ว') && (
-                            <button 
+                            <button
                               onClick={(e) => handleBatchRelease(proj.id, e)}
                               className="px-2.5 py-1 bg-purple-600/10 border border-purple-500/25 hover:bg-purple-600/25 text-purple-300 text-[10px] font-bold rounded-md flex items-center gap-1 transition-all"
                               title="ส่งออกของแบบกลุ่ม"
@@ -1231,7 +1338,7 @@ export default function App() {
                           )}
 
                           {currentUser && currentUser.role === 'engineer' && proj.engineerId === currentUser.id && (
-                            <button 
+                            <button
                               onClick={(e) => handleArchiveProject(proj.id, e)}
                               className="px-2.5 py-1 bg-slate-950 border border-slate-800 hover:border-brand-500 hover:text-brand-300 text-[10px] font-bold rounded-md flex items-center gap-1 transition-all text-slate-400"
                               title="จบโครงการ"
@@ -1242,7 +1349,7 @@ export default function App() {
 
                           {/* Delete project button */}
                           {(currentUser.role === 'admin' || (currentUser.role === 'engineer' && proj.engineerId === currentUser.id)) && (
-                            <button 
+                            <button
                               onClick={(e) => handleDeleteProject(proj.id, e)}
                               className="px-2.5 py-1 bg-slate-950 border border-slate-800 hover:border-rose-500 hover:text-rose-400 text-[10px] font-bold rounded-md flex items-center gap-1 transition-all text-slate-400"
                               title="ลบโครงการอย่างถาวร"
@@ -1256,7 +1363,7 @@ export default function App() {
                       {/* Accordion Content */}
                       {isExpanded && (
                         <div className="p-4 space-y-4 border-t border-slate-800/40 text-left">
-                          
+
                           {/* Micro condensed floor pills grid */}
                           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
                             {filteredFloors.map(fz => {
@@ -1266,7 +1373,7 @@ export default function App() {
                               const isDraft = currentUser && currentUser.role === 'draft' && assignedOwnerDraftId === currentUser.id;
 
                               return (
-                                <div 
+                                <div
                                   key={fz.id}
                                   onClick={() => openFloorEditor(fz, proj)}
                                   className={`p-2 rounded-lg border cursor-pointer transition-all duration-150 hover:-translate-y-0.5 flex flex-col justify-between h-20 text-left relative ${getStatusStyle(fz.status)}`}
@@ -1304,7 +1411,7 @@ export default function App() {
                                       {fz.status}
                                     </span>
                                     {isDraft && fz.status !== 'มีแบบ Shop แล้ว' && fz.status !== 'ออกของแล้ว' && (
-                                      <button 
+                                      <button
                                         onClick={(e) => handleDraftComplete(fz.id, e)}
                                         className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[8px] font-bold transition-all shadow-md"
                                       >
@@ -1321,20 +1428,20 @@ export default function App() {
                           {currentUser && currentUser.role === 'engineer' && proj.engineerId === currentUser.id && (
                             <div className="pt-3 border-t border-slate-800/40 flex flex-wrap items-center gap-3 bg-slate-900/10 p-2.5 rounded-lg border border-slate-800/40">
                               <span className="text-xs font-semibold text-slate-400">เพิ่มชั้นงานย่อย (Quick Add):</span>
-                              <input 
-                                type="text" 
-                                placeholder="ชื่อชั้น/โซน" 
+                              <input
+                                type="text"
+                                placeholder="ชื่อชั้น/โซน"
                                 className="glass-input px-2 py-1 text-xs rounded border w-28 text-slate-200"
                                 value={quickFloorName[proj.id] || ''}
                                 onChange={(e) => setQuickFloorName({ ...quickFloorName, [proj.id]: e.target.value })}
                               />
-                              <input 
-                                type="date" 
+                              <input
+                                type="date"
                                 className="glass-input px-2 py-1 text-xs rounded border text-slate-200"
                                 value={quickFloorDeadline[proj.id] || defaultDeadline}
                                 onChange={(e) => setQuickFloorDeadline({ ...quickFloorDeadline, [proj.id]: e.target.value })}
                               />
-                              <button 
+                              <button
                                 onClick={() => handleQuickAddFloor(proj.id)}
                                 className="px-3 py-1 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded flex items-center gap-1 transition-all"
                               >
@@ -1397,7 +1504,7 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
+
               {/* DRAFTSPERSON STRESS VIEW */}
               <div className="glass-panel p-6 rounded-2xl text-left">
                 <h3 className="text-base font-bold text-slate-200 flex items-center gap-2 mb-4 border-b border-slate-800 pb-3">
@@ -1531,12 +1638,153 @@ export default function App() {
             </div>
           </div>
         )}
+        {/* TAB ปฏิทิน (CALENDAR & TIMELINE VIEW) */}
+        {activeTab === 'calendar' && (
+          <div className="space-y-6 animate-fadeIn">
 
+            {/* Header ปฏิทิน + ระบบ Filter */}
+            <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-left">
+              <div>
+                <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
+                  <Calendar className="h-5 w-5 text-brand-400" />
+                  กระดานปฏิทินและจัดคิวงาน (Interactive Board)
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  สามารถลาก-วาง การ์ดงานเพื่อเปลี่ยน Deadline หรือสลับผู้รับผิดชอบได้ทันที (Drag & Drop)
+                </p>
+              </div>
+
+              {/* ตัวกรอง (Filters) */}
+              <div className="flex gap-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400">👨‍🔧 วิศวกร:</span>
+                  <select
+                    className="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1"
+                    value={calendarFilterEng}
+                    onChange={(e) => setCalendarFilterEng(e.target.value)}
+                  >
+                    <option value="ALL">ทุกคน</option>
+                    {users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => (
+                      <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400">📐 ดร๊าฟ:</span>
+                  <select
+                    className="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1"
+                    value={calendarFilterDraft}
+                    onChange={(e) => setCalendarFilterDraft(e.target.value)}
+                  >
+                    <option value="ALL">ทุกคน</option>
+                    {users.filter(u => u.role === 'draft').map(u => (
+                      <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* ส่วนแสดงปฏิทิน */}
+            <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-100 h-[750px] overflow-hidden">
+              <style dangerouslySetInnerHTML={{
+                __html: `
+                .rbc-calendar { font-family: 'Sarabun', sans-serif; color: #1e293b; background: white; border-radius: 8px; padding: 10px; }
+                .rbc-toolbar button { color: #334155; border-color: #cbd5e1; }
+                .rbc-toolbar button.rbc-active { background-color: #e2e8f0; color: #0f172a; font-weight: bold; }
+                .rbc-header { padding: 8px; font-weight: bold; background: #f8fafc; }
+                .rbc-event { padding: 4px; font-size: 11px; font-weight: bold; margin-bottom: 3px; border-radius: 4px;}
+                
+                /* ซ่อนตารางเวลาเวลาดูคิวรายคน */
+                .rbc-time-gutter { display: none !important; } 
+                .rbc-allday-cell { display: none !important; } 
+                .rbc-timeslot-group { border-bottom: none !important; } 
+                .rbc-time-content { border-top: none !important; }
+              `}} />
+
+              <DnDCalendar
+                localizer={localizer}
+                culture="th"
+                onEventDrop={handleEventDrop} // ผูกฟังก์ชัน Drag & Drop
+                resizable={false} // ไม่ให้ยืดหดขนาดเวลาได้
+                events={(() => {
+                  const draftName = ownerDraft?.name || 'ไม่ระบุ';
+                  const projName = proj.name || proj.projectName || 'ไม่ระบุชื่อโครงการ'; // ข้อ 1: กัน undefined
+                  const initials = getInitials(draftName); // ข้อ 2: ดึงชื่อย่อดร๊าฟ
+
+                  evts.push({
+                    id: fz.id,
+                    projectId: proj.id,
+                    zoneId: fz.id,
+                    title: `[${initials}] ${fz.name}`, // โชว์ชื่อย่อดร๊าฟแทนชื่อยาวๆ บนการ์ด
+                    projectName: projName,
+                    engName: ownerEng?.name || 'N/A',
+                    draftName: draftName,
+                    status: fz.status,
+                    isOverdue: risk === 'OVERDUE',
+                    start: startDate,
+                    end: endDate,
+                    allDay: false,
+                    resourceId: ownerDraftId
+                  });
+                  // ...
+                })()}
+
+                // ...
+
+                components={{
+                  event: ({ event }) => (
+                    // ข้อ 3: เอา title="" ออก เพื่อลบ Tooltip ดำๆ แบบเก่า
+                    <div className="w-full h-full cursor-pointer flex items-center gap-1">
+                      {event.isOverdue && <span className="text-red-600 animate-pulse">🚨</span>}
+                      <span className="truncate">{event.title}</span>
+                    </div>
+                  )
+                }}
+                // --- ส่วนกำหนดสีตามสถานะ ---
+                eventPropGetter={(event) => {
+                  let bgColor = '#cbd5e1'; // สีเทา (รอ Framing / อื่นๆ)
+                  let textColor = '#0f172a';
+
+                  if (event.status === 'พร้อมทำ Shop') bgColor = '#bae6fd'; // สีฟ้า
+                  if (event.status === 'กำลังทำ Shop') bgColor = '#fef08a'; // สีเหลือง
+                  if (event.status === 'มีแบบ Shop แล้ว') bgColor = '#86efac'; // สีเขียว
+                  if (event.status === 'มีการ Revise') { bgColor = '#f87171'; textColor = 'white'; } // สีแดง
+
+                  let borderStyle = event.isOverdue ? '2px solid #ef4444' : 'none'; // กรอบแดงถ่างเลยกำหนด
+
+                  return { style: { backgroundColor: bgColor, color: textColor, border: borderStyle } };
+                }}
+
+                // --- ส่วนทำ Tooltip & Custom Card UI ---
+                components={{
+                  event: ({ event }) => (
+                    <div
+                      title={`โครงการ: ${event.projectName}\nชั้น/โซน: ${event.title}\nวิศวกร: ${event.engName}\nดร๊าฟ: ${event.draftName}\nสถานะ: ${event.status}${event.isOverdue ? '\n🚨 เลยกำหนดส่ง!' : ''}`}
+                      className="w-full h-full cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1">
+                        {event.isOverdue && <span className="text-red-600 animate-pulse">🚨</span>}
+                        <span className="truncate">{event.title}</span>
+                      </div>
+                    </div>
+                  )
+                }}
+
+                messages={{
+                  today: 'วันนี้', previous: 'ย้อนหลัง', next: 'ถัดไป',
+                  month: 'ปฏิทินรวม (Month)', day: 'ดูคิวแยกรายคน (Board)',
+                  noEventsInRange: 'ไม่มีคิวงานในช่วงนี้'
+                }}
+              />
+            </div>
+          </div>
+        )}
         {/* TAB 4: ADMIN PORTAL */}
         {activeTab === 'admin' && currentUser && currentUser.role === 'admin' && (
           <div className="space-y-8 animate-fadeIn text-left">
             <div className="glass-panel p-6 rounded-2xl border border-slate-850">
-              
+
               <div className="flex justify-between items-center border-b border-slate-850 pb-4 mb-6">
                 <div>
                   <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
@@ -1549,19 +1797,17 @@ export default function App() {
                 </div>
 
                 <div className="flex gap-2 bg-slate-950 p-1 rounded-xl border border-slate-850">
-                  <button 
+                  <button
                     onClick={() => setAdminSubTab('users')}
-                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                      adminSubTab === 'users' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${adminSubTab === 'users' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                      }`}
                   >
                     จัดการผู้ใช้งาน
                   </button>
-                  <button 
+                  <button
                     onClick={() => setAdminSubTab('workload')}
-                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                      adminSubTab === 'workload' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${adminSubTab === 'workload' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                      }`}
                   >
                     ตั้งค่าเกณฑ์เกลี่ยงาน
                   </button>
@@ -1573,7 +1819,7 @@ export default function App() {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center">
                     <h3 className="text-sm font-extrabold text-slate-300">รายชื่อผู้ใช้งานภายในองค์กร ({adminUsersList.length} คน)</h3>
-                    <button 
+                    <button
                       onClick={() => {
                         setUserFormName('');
                         setUserFormEmail('');
@@ -1605,17 +1851,16 @@ export default function App() {
                             <td className="p-4 font-bold text-slate-100">{usr.name}</td>
                             <td className="p-4 text-slate-350 font-mono">{usr.email}</td>
                             <td className="p-4">
-                              <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${
-                                usr.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+                              <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${usr.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
                                 usr.role === 'engineer' ? 'bg-brand-500/10 text-brand-300 border border-brand-500/20' :
-                                'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-                              }`}>
+                                  'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
+                                }`}>
                                 {usr.role}
                               </span>
                             </td>
                             <td className="p-4">
                               <div className="flex items-center justify-center gap-2">
-                                <button 
+                                <button
                                   onClick={() => {
                                     setSelectedUserForEdit(usr);
                                     setUserFormName(usr.name);
@@ -1628,7 +1873,7 @@ export default function App() {
                                 >
                                   แก้ไข/รหัสผ่าน
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => handleDeleteUser(usr.id)}
                                   className="p-1 text-slate-500 hover:text-rose-400 transition-all"
                                   title="ลบผู้ใช้งาน"
@@ -1658,11 +1903,11 @@ export default function App() {
                       <label className="block text-xs font-semibold text-slate-400 mb-1.5">
                         1. ตัวคูณจำนวนชั่วโมงในการร่างแบบ / 1 ชั้นงาน (ชั่วโมงต่อชั้น)
                       </label>
-                      <input 
-                        type="number" 
-                        step="0.1" 
-                        min="0.1" 
-                        required 
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        required
                         className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
                         value={cfgHoursPerSheet}
                         onChange={(e) => setCfgHoursPerSheet(e.target.value)}
@@ -1676,10 +1921,10 @@ export default function App() {
                       <label className="block text-xs font-semibold text-slate-400 mb-1.5">
                         2. เกณฑ์จำนวนชั้นงานรวมสูงสุดต่อคน (เพดานคุมความตึงเครียดคิวงาน)
                       </label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        required 
+                      <input
+                        type="number"
+                        min="1"
+                        required
                         className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
                         value={cfgMaxSheets}
                         onChange={(e) => setCfgMaxSheets(e.target.value)}
@@ -1693,10 +1938,10 @@ export default function App() {
                       <label className="block text-xs font-semibold text-slate-400 mb-1.5">
                         3. เกณฑ์ระยะวันอันตรายส่งงานไม่ทัน (วันเดดไลน์ฉุกเฉิน)
                       </label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        required 
+                      <input
+                        type="number"
+                        min="1"
+                        required
                         className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
                         value={cfgWarningDays}
                         onChange={(e) => setCfgWarningDays(e.target.value)}
@@ -1707,7 +1952,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button 
+                  <button
                     type="submit"
                     className="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg text-xs shadow-md shadow-brand-500/10"
                   >
@@ -1796,7 +2041,7 @@ export default function App() {
       {isFloorEditOpen && selectedFloor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="glass-panel w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden border border-slate-800 flex flex-col md:flex-row animate-scaleUp">
-            
+
             <div className="flex-grow p-6 space-y-4 border-r border-slate-800 text-left">
               <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
                 <h3 className="font-bold text-slate-200 text-base flex items-center gap-2">
@@ -1805,7 +2050,7 @@ export default function App() {
                 </h3>
 
                 {currentUser && currentUser.role === 'engineer' && (
-                  <button 
+                  <button
                     type="button"
                     onClick={(e) => handleSoftDeleteFloorZone(selectedFloor.id, e)}
                     className="p-2 hover:bg-slate-900 border border-transparent hover:border-rose-500 rounded-lg text-slate-400 hover:text-rose-500 transition-all flex items-center gap-1"
@@ -1931,31 +2176,31 @@ export default function App() {
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุลผู้ใช้</label>
-                <input 
-                  type="text" required placeholder="เช่น ศุภฤกษ์ ตรงจิตสุนทร" 
+                <input
+                  type="text" required placeholder="เช่น ศุภฤกษ์ ตรงจิตสุนทร"
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
                   value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลทางการ</label>
-                <input 
-                  type="email" required placeholder="name@syncdraft.com" 
+                <input
+                  type="email" required placeholder="name@syncdraft.com"
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
                   value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">รหัสผ่านเริ่มต้น</label>
-                <input 
-                  type="password" required placeholder="••••••" 
+                <input
+                  type="password" required placeholder="••••••"
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
                   value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
-                <select 
+                <select
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
                   value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
                 >
@@ -1986,7 +2231,7 @@ export default function App() {
             <form onSubmit={handleEditUserSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุล</label>
-                <input 
+                <input
                   type="text" required
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
                   value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
@@ -1994,7 +2239,7 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลผู้ใช้งาน</label>
-                <input 
+                <input
                   type="email" required
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
                   value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
@@ -2002,15 +2247,15 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">เปลี่ยนรหัสผ่าน (กรอกเฉพาะเมื่อต้องการตั้งใหม่)</label>
-                <input 
-                  type="password" placeholder="ว่างไว้หากใช้รหัสเดิม" 
+                <input
+                  type="password" placeholder="ว่างไว้หากใช้รหัสเดิม"
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 animate-fadeIn"
                   value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
-                <select 
+                <select
                   className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
                   value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
                 >
@@ -2027,7 +2272,65 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* ========================================= */}
+      {/* MODAL: ดูรายละเอียดงานในปฏิทิน (ข้อ 3) */}
+      {/* ========================================= */}
+      {selectedEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+            <button
+              onClick={() => setSelectedEvent(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
 
-    </div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-brand-500/20 text-brand-400">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">{selectedEvent.projectName}</h3>
+                <p className="text-slate-400">โซน/ชั้น: <span className="text-white">{selectedEvent.title.replace(/\[.*?\] /, '')}</span></p>
+              </div>
+            </div>
+
+            <div className="space-y-3 bg-slate-800/50 p-4 rounded-xl text-sm">
+              <div className="flex justify-between border-b border-slate-700 pb-2">
+                <span className="text-slate-400">👨‍🔧 วิศวกร:</span>
+                <span className="text-slate-200 font-medium">{selectedEvent.engName}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-700 pb-2">
+                <span className="text-slate-400">📐 ผู้เขียนแบบ:</span>
+                <span className="text-slate-200 font-medium">{selectedEvent.draftName}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-700 pb-2">
+                <span className="text-slate-400">⏳ สถานะ:</span>
+                <span className="text-brand-400 font-medium">{selectedEvent.status}</span>
+              </div>
+              <div className="flex justify-between pt-1">
+                <span className="text-slate-400">📅 กำหนดส่ง:</span>
+                <span className={`${selectedEvent.isOverdue ? 'text-red-400 font-bold' : 'text-slate-200'}`}>
+                  {selectedEvent.isOverdue && "🚨 "}
+                  {new Date(selectedEvent.start).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setSelectedEvent(null)}
+              className="mt-6 w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+            >
+              ปิดหน้าต่าง
+            </button>
+          </div>
+        </div>
+      )}
+
+    </div> // นี่คือแท็กปิด </div> สุดท้ายของ <div className="min-h-screen...">
+  );
+}
+export default App;
+    </div >
   );
 }
