@@ -1,42 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutDashboard,
-  Layers,
-  Users,
-  Clock,
-  Flame,
-  CheckCircle2,
-  Plus,
-  Settings as SettingsIcon,
-  Activity,
-  ArrowRight,
-  Info,
-  Calendar,
-  AlertTriangle,
-  History,
-  Check,
-  Eye,
-  FileText,
-  UserCheck,
-  Wrench,
-  Grid,
-  X,
-  Archive,
-  RefreshCw,
-  FolderMinus,
-  ArrowUpRight,
-  Trash2,
-  ListTodo,
-  ChevronDown,
-  ChevronUp,
-  Sparkles,
-  Lock,
-  Mail,
-  UserPlus,
-  KeyRound,
-  LogOut,
-  Sliders,
-  Spline
+  LayoutDashboard, Layers, Users, Clock, Flame, CheckCircle2, Plus, 
+  Settings as SettingsIcon, Activity, ArrowRight, Info, Calendar, 
+  AlertTriangle, History, Check, Eye, FileText, UserCheck, Wrench, 
+  Grid, X, Archive, RefreshCw, FolderMinus, ArrowUpRight, Trash2, 
+  ListTodo, ChevronDown, ChevronUp, Sparkles, Lock, Mail, UserPlus, 
+  KeyRound, LogOut, Spline, Search, User, Sliders
 } from 'lucide-react';
 // --- นำเข้า Library สำหรับปฏิทิน และ Drag & Drop ---
 import { Calendar as BigCalendar, dateFnsLocalizer, Views } from 'react-big-calendar';
@@ -84,28 +53,23 @@ const compareFloorZones = (a, b) => {
   });
 };
 
-const expandFloorInput = (rawText) => {
-  const items = String(rawText || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
-
+// เพิ่มตัวแปร isAutoExpand เพื่อเลือกว่าจะขยายหรือไม่
+const expandFloorInput = (rawText, isAutoExpand = true) => {
+  const items = String(rawText || '').split(',').map(item => item.trim()).filter(Boolean);
   const expanded = [];
   items.forEach(item => {
-    const rangeMatch = item.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (rangeMatch) {
-      const start = parseInt(rangeMatch[1], 10);
-      const end = parseInt(rangeMatch[2], 10);
-      const step = start <= end ? 1 : -1;
-      for (let n = start; step > 0 ? n <= end : n >= end; n += step) {
-        expanded.push(String(n));
+    if (isAutoExpand) {
+      const rangeMatch = item.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10);
+        const end = parseInt(rangeMatch[2], 10);
+        const step = start <= end ? 1 : -1;
+        for (let n = start; step > 0 ? n <= end : n >= end; n += step) expanded.push(String(n));
+        return;
       }
-      return;
     }
-
     expanded.push(item);
   });
-
   return expanded;
 };
 
@@ -146,23 +110,26 @@ export default function App() {
 
   // --- ฟังก์ชันจัดการเมื่อมีการลาก-วาง (Drag & Drop) บนปฏิทิน ---
   const handleEventDrop = async ({ event, start, end, resourceId }) => {
-    // หาว่าลากงานของโปรเจกต์ไหน โซนไหน
     const projIndex = projects.findIndex(p => p.id === event.projectId);
     if (projIndex === -1) return;
 
     const zoneIndex = projects[projIndex].floorZones.findIndex(fz => fz.id === event.zoneId);
     if (zoneIndex === -1) return;
 
-    // อัปเดตข้อมูลจำลองบน Frontend ก่อน (Optimistic Update)
+    // 🌟 แก้บั๊กวันที่คลาดเคลื่อน (ชดเชยเวลา Timezone ของไทย เพื่อไม่ให้วันที่โดนปัดลง)
+    const localDate = new Date(start.getTime() - (start.getTimezoneOffset() * 60000))
+      .toISOString().split('T')[0];
+
     const updatedProjects = [...projects];
     updatedProjects[projIndex].floorZones[zoneIndex] = {
       ...updatedProjects[projIndex].floorZones[zoneIndex],
-      deadline: start.toISOString().split('T')[0],
+      deadline: localDate, // ใช้วันที่ที่ชดเชยเวลาแล้ว
       assignedDraftId: resourceId || updatedProjects[projIndex].floorZones[zoneIndex].assignedDraftId
     };
 
     setProjects(updatedProjects);
   };
+
   // Core States
   const [activeTab, setActiveTab] = useState('workspace'); // 'workspace', 'dashboard', 'recovery', 'admin'
   const [projects, setProjects] = useState([]);
@@ -224,6 +191,20 @@ export default function App() {
   const [newProjectNotes, setNewProjectNotes] = useState('');
   const [newFloorInputText, setNewFloorInputText] = useState('');
   const [defaultDeadline, setDefaultDeadline] = useState('');
+  const [autoExpandFloors, setAutoExpandFloors] = useState(true);
+  const [customHolidays, setCustomHolidays] = useState(() => {
+    const saved = localStorage.getItem('syncdraft_holidays');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const toggleHoliday = (dateStr) => {
+    if (currentUser?.role === 'draft') return alert('วิศวกรหรือแอดมินเท่านั้นที่กำหนดวันหยุดได้ครับ');
+    const updated = customHolidays.includes(dateStr)
+      ? customHolidays.filter(d => d !== dateStr)
+      : [...customHolidays, dateStr];
+    setCustomHolidays(updated);
+    localStorage.setItem('syncdraft_holidays', JSON.stringify(updated));
+  };
 
   // Floor Edit Form
   const [editFloorName, setEditFloorName] = useState('');
@@ -397,14 +378,7 @@ export default function App() {
       return;
     }
 
-    const floorsArray = expandFloorInput(newFloorInputText)
-      .map(name => ({
-        name,
-        sheetCount: 1, // 1 ชั้น = 1 แผ่นเสมอ
-        deadline: '',
-        notes: '',
-        assignedDraftId: parseInt(newDraftId, 10)
-      }));
+    const floorsArray = expandFloorInput(newFloorInputText, autoExpandFloors).map(name => ({ name, sheetCount: 1, deadline: defaultDeadline || '', notes: '', assignedDraftId: parseInt(newDraftId, 10) }));
 
     if (floorsArray.length === 0) {
       alert('กรุณาระบุชั้นงานอย่างน้อย 1 รายการ');
@@ -734,19 +708,36 @@ export default function App() {
     }
   };
 
-  // Filter project workspace according to CURRENT authenticated user
+  // Filter project workspace according to CURRENT authenticated user and workspace filters
   const activeProjectsFiltered = projects.filter(proj => {
-    const matchesQuery = proj.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      proj.projectNumber.toLowerCase().includes(searchQuery.toLowerCase());
+    if (proj.isArchived) return false;
 
-    if (!matchesQuery) return false;
-
+    // กรองตาม Role (เมื่อเลือกแสดงเฉพาะงานของฉัน)
     if (filterOnlyMyWork && currentUser && currentUser.role !== 'admin') {
       if (currentUser.role === 'engineer' && proj.engineerId !== currentUser.id) return false;
       if (currentUser.role === 'draft') {
         const hasMyAssignedFloor = proj.floorZones?.some(fz => (fz.assignedDraftId || proj.draftId) === currentUser.id);
         if (proj.draftId !== currentUser.id && !hasMyAssignedFloor) return false;
       }
+    }
+
+    // กรอง Search (เลขโครงการ หรือ ชื่อโครงการ)
+    const searchMatch = !wsSearch ||
+      proj.projectNumber.toLowerCase().includes(wsSearch.toLowerCase()) ||
+      (proj.projectName && proj.projectName.toLowerCase().includes(wsSearch.toLowerCase()));
+    if (!searchMatch) return false;
+
+    // กรองวิศวกร
+    if (wsFilterEng !== 'ALL' && proj.engineerId !== parseInt(wsFilterEng)) return false;
+
+    // กรองดร๊าฟ & สถานะ
+    if (wsFilterDraft !== 'ALL' || wsFilterStatus !== 'ALL') {
+      const zoneMatch = proj.floorZones?.some(fz => {
+        const draftMatch = wsFilterDraft === 'ALL' || (fz.assignedDraftId || proj.draftId) === parseInt(wsFilterDraft);
+        const statusMatch = wsFilterStatus === 'ALL' || fz.status === wsFilterStatus;
+        return draftMatch && statusMatch;
+      });
+      if (!zoneMatch) return false;
     }
 
     return true;
@@ -869,6 +860,20 @@ export default function App() {
       default: return 'border-slate-800 bg-slate-900/40 text-slate-400';
     }
   };
+  const calculateDraftProjectsCount = (draftId) => {
+    let count = 0;
+    projects.filter(p => !p.isArchived).forEach(p => {
+      const hasWork = p.floorZones?.some(fz => fz.deadline && !COMPLETED_STATUSES.has(fz.status) && (fz.assignedDraftId || p.draftId) === draftId);
+      if (hasWork) count++;
+    });
+    return count;
+  };
+
+  const ganttDates = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - 2 + i); // ย้อนหลัง 2 วัน ล่วงหน้า 11 วัน
+    return d;
+  });
 
   // If NOT authenticated, render the login view
   if (!token) {
@@ -1063,44 +1068,11 @@ export default function App() {
         {/* NAV TABS SELECTOR */}
         <div className="flex justify-between items-center border-b border-slate-900 mb-8 overflow-x-auto">
           <div className="flex gap-8">
-            <button
-              onClick={() => setActiveTab('workspace')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'workspace' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <Layers className="h-4 w-4" /> แผงควบคุมงาน (Workspace)
-            </button>
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'dashboard' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <LayoutDashboard className="h-4 w-4" /> แดชบอร์ดวิเคราะห์ (Dashboard)
-            </button>
-            <button
-              onClick={() => setActiveTab('recovery')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'recovery' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <RefreshCw className="h-4 w-4" /> ถังขยะกู้คืนข้อมูล (Restoration)
-            </button>
-            <button
-              onClick={() => setActiveTab('calendar')}
-              className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'calendar' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <Calendar className="h-4 w-4" /> กระดานปฏิทิน (Timeline)
-            </button>
-            {/* Admin back-office tab: Visible strictly to admin */}
-            {currentUser && currentUser.role === 'admin' && (
-              <button
-                onClick={() => setActiveTab('admin')}
-                className={`pb-4 text-xs font-bold transition-all flex items-center gap-1.5 border-b-2 ${activeTab === 'admin' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                <SettingsIcon className="h-4 w-4" /> ระบบหลังบ้าน Admin (Settings)
-              </button>
-            )}
+            <button onClick={() => setActiveTab('workspace')} className={`pb-4 text-xs font-bold flex gap-1.5 border-b-2 ${activeTab === 'workspace' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'}`}><Layers className="h-4 w-4" /> Workspace</button>
+            <button onClick={() => setActiveTab('calendar')} className={`pb-4 text-xs font-bold flex gap-1.5 border-b-2 ${activeTab === 'calendar' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'}`}><Calendar className="h-4 w-4" /> Calendar</button>
+            <button onClick={() => setActiveTab('dashboard')} className={`pb-4 text-xs font-bold flex gap-1.5 border-b-2 ${activeTab === 'dashboard' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'}`}><LayoutDashboard className="h-4 w-4" /> Dashboard</button>
+            <button onClick={() => setActiveTab('recovery')} className={`pb-4 text-xs font-bold flex gap-1.5 border-b-2 ${activeTab === 'recovery' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'}`}><RefreshCw className="h-4 w-4" /> Recovery</button>
+            {currentUser?.role === 'admin' && <button onClick={() => setActiveTab('admin')} className={`pb-4 text-xs font-bold flex gap-1.5 border-b-2 ${activeTab === 'admin' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'}`}><SettingsIcon className="h-4 w-4" /> Admin</button>}
           </div>
 
           {/* Quick toggle filter by roles */}
@@ -1125,74 +1097,56 @@ export default function App() {
           )}
         </div>
 
-        {/* TAB 1: ACCORDION WORKSPACE */}
+        {/* TAB 1: WORKSPACE */}
         {activeTab === 'workspace' && (
           <div className="space-y-6 animate-fadeIn">
-            {/* 👇👇 แถบเครื่องมือ Filter & Search (ข้อ 4) 👇👇 */}
-            <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex flex-wrap gap-4 items-center bg-slate-900/50">
-              {/* ช่องค้นหา */}
-              <div className="flex-1 min-w-[200px] relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="text" placeholder="ค้นหาเลขที่ หรือชื่อโครงการ..."
-                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:border-brand-500 outline-none"
-                  value={wsSearch} onChange={(e) => setWsSearch(e.target.value)}
-                />
+
+            {/* 🌟 รวบแถบเครื่องมือทั้งหมดให้อยู่ในกล่องเดียว ชั้นเดียว เรียงสวยงาม */}
+            <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-slate-900/60">
+
+              {/* กลุ่มฝั่งซ้าย: ค้นหา & ตัวกรอง */}
+              <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto flex-1">
+                <div className="min-w-[220px] relative flex-1 lg:flex-none">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <input type="text" placeholder="ค้นหาเลขที่, ชื่อโครงการ..."
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:border-brand-500 outline-none transition-colors"
+                    value={wsSearch} onChange={(e) => setWsSearch(e.target.value)} />
+                </div>
+                <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm" value={wsFilterEng} onChange={(e) => setWsFilterEng(e.target.value)}>
+                  <option value="ALL">👨‍🔧 วิศวกรทั้งหมด</option>
+                  {users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+                <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm" value={wsFilterDraft} onChange={(e) => setWsFilterDraft(e.target.value)}>
+                  <option value="ALL">📐 ดร๊าฟทั้งหมด</option>
+                  {users.filter(u => u.role === 'draft').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+                <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm" value={wsFilterStatus} onChange={(e) => setWsFilterStatus(e.target.value)}>
+                  <option value="ALL">📌 ทุกสถานะ</option>
+                  {STATUS_FLOW.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
               </div>
-              {/* กรองวิศวกร */}
-              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
-                value={wsFilterEng} onChange={(e) => setWsFilterEng(e.target.value)}>
-                <option value="ALL">👨‍🔧 วิศวกรทั้งหมด</option>
-                {users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </select>
-              {/* กรองดร๊าฟ */}
-              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
-                value={wsFilterDraft} onChange={(e) => setWsFilterDraft(e.target.value)}>
-                <option value="ALL">📐 ดร๊าฟทั้งหมด</option>
-                {users.filter(u => u.role === 'draft').map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </select>
-              {/* กรองสถานะ */}
-              <select className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm"
-                value={wsFilterStatus} onChange={(e) => setWsFilterStatus(e.target.value)}>
-                <option value="ALL">📌 ทุกสถานะ</option>
-                <option value="รอ Framing">รอ Framing</option>
-                <option value="กำลังทำ Shop">กำลังทำ Shop</option>
-                <option value="มีแบบ Shop แล้ว">มีแบบ Shop แล้ว</option>
-                <option value="ออกของแล้ว">ออกของแล้ว</option>
-              </select>
-            </div>
-            {/* 👆👆 สิ้นสุดแถบ Filter 👆👆 */}
-            {/* ตรงนี้คือการนำ Filter มาใช้กับลูปโปรเจกต์เดิม */}
-            {projects
-              .filter(p => !p.isArchived)
-              .filter(p => {
-                // โลจิกการกรอง (Search, วิศวกร, ดร๊าฟ, สถานะ)
-                const searchMatch = !wsSearch || p.projectNumber.toLowerCase().includes(wsSearch.toLowerCase()) || (p.name && p.name.toLowerCase().includes(wsSearch.toLowerCase()));
-                const engMatch = wsFilterEng === 'ALL' || p.engineerId === parseInt(wsFilterEng);
-                const zoneMatch = p.floorZones.some(fz => {
-                  const draftMatch = wsFilterDraft === 'ALL' || (fz.assignedDraftId || p.draftId) === parseInt(wsFilterDraft);
-                  const statusMatch = wsFilterStatus === 'ALL' || fz.status === wsFilterStatus;
-                  return draftMatch && statusMatch;
-                });
-                // ถ้าค้นหาไม่ตรง หรือไม่มีโซนไหนตรงกับสถานะ/ดร๊าฟเลย ให้ซ่อน
-                if (!searchMatch || !engMatch || (wsFilterDraft !== 'ALL' || wsFilterStatus !== 'ALL' ? !zoneMatch : false)) return false;
-                return true;
-              })
-              .map((project) => (
-                // ... โค้ดกล่อง Project เดิมของคุณ <div key={project.id} className="..."> ...
-                {/* Auto workload alert warning */ }
-            { myStressWarningMessage && (
-                  <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-2xl flex items-start gap-3 animate-fadeIn text-left">
-                    <AlertTriangle className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-rose-300 font-semibold leading-relaxed">
-                      {myStressWarningMessage}
-                    </p>
-                  </div>
+
+              {/* กลุ่มฝั่งขวา: ปุ่มเครื่องมือ และสร้างโครงการ */}
+              <div className="flex items-center gap-2 w-full lg:w-auto justify-end border-t lg:border-t-0 border-slate-800 pt-3 lg:pt-0">
+                <button onClick={() => toggleAllAccordions(true)} className="px-3 py-2 bg-slate-900 border border-slate-700 text-xs font-bold rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-all">ขยายทั้งหมด</button>
+                <button onClick={() => toggleAllAccordions(false)} className="px-3 py-2 bg-slate-900 border border-slate-700 text-xs font-bold rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-all">ย่อทั้งหมด</button>
+                {currentUser?.role === 'engineer' && (
+                  <button onClick={() => { setIsCreateProjectOpen(true); setNewEngineerId(currentUser.id.toString()); }} className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg text-sm flex items-center gap-1.5 shadow-lg shadow-brand-500/20 transition-all ml-1">
+                    <Plus className="h-4 w-4" /> สร้างโครงการ
+                  </button>
                 )}
+              </div>
+            </div>
+
+            {/* Warning Message */}
+            {myStressWarningMessage && (
+              <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-2xl flex items-start gap-3 animate-fadeIn text-left">
+                <AlertTriangle className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-rose-300 font-semibold leading-relaxed">
+                  {myStressWarningMessage}
+                </p>
+              </div>
+            )}
 
             {/* Checklist guide desk (เรียงลำดับคิวงานเดดไลน์ด่วนที่สุด) */}
             {currentUser && currentUser.role === 'draft' && draftChecklistData.length > 0 && (
@@ -1232,60 +1186,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Control Bar */}
-            <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 flex-grow max-w-xl">
-                <input
-                  type="text"
-                  placeholder="ค้นหาเลขโครงการ, ชื่อโครงการ..."
-                  className="glass-input px-4 py-2 text-sm rounded-lg w-full text-slate-200"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-
-                <select
-                  className="glass-input px-3 py-2 text-xs rounded-lg text-slate-350"
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="All">สถานะชั้นงานทั้งหมด</option>
-                  {STATUS_FLOW.map(st => <option key={st} value={st}>{st}</option>)}
-                </select>
-              </div>
-
-              {/* Accordion Collapse/Expand Controls */}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => toggleAllAccordions(true)}
-                  className="px-3 py-1.5 bg-slate-900 border border-slate-800 text-xs font-semibold rounded text-slate-400 hover:text-slate-200"
-                >
-                  ขยายทั้งหมด
-                </button>
-                <button
-                  onClick={() => toggleAllAccordions(false)}
-                  className="px-3 py-1.5 bg-slate-900 border border-slate-800 text-xs font-semibold rounded text-slate-400 hover:text-slate-200"
-                >
-                  ย่อทั้งหมด
-                </button>
-              </div>
-
-              {currentUser && currentUser.role === 'engineer' && (
-                <button
-                  onClick={() => {
-                    const currentDrf = users.find(u => u.role === 'draft');
-                    if (currentUser?.role === 'engineer') {
-                      setNewEngineerId(currentUser.id.toString());
-                    }
-                    if (currentDrf) setNewDraftId(currentDrf.id.toString());
-                    setIsCreateProjectOpen(true);
-                  }}
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white font-bold rounded-lg transition-all shadow-md text-sm whitespace-nowrap"
-                >
-                  <Plus className="h-4 w-4" /> สร้างโครงการใหม่
-                </button>
-              )}
-            </div>
-
             {/* List of Active projects */}
             <div className="space-y-4">
               {activeProjectsFiltered.length === 0 ? (
@@ -1296,10 +1196,22 @@ export default function App() {
                 activeProjectsFiltered.map(proj => {
                   const isExpanded = openProjectAccordions[proj.id];
                   const filteredFloors = proj.floorZones ? proj.floorZones.filter(fz => {
-                    return statusFilter === 'All' || fz.status === statusFilter;
+                    // กรองตามผู้รับผิดชอบหลัก/ย่อย (เมื่อเลือกแสดงเฉพาะงานของฉัน)
+                    if (filterOnlyMyWork && currentUser && currentUser.role === 'draft') {
+                      return (fz.assignedDraftId || proj.draftId) === currentUser.id;
+                    }
+                    // กรองดร๊าฟรายบุคคลจาก Workspace filter
+                    if (wsFilterDraft !== 'ALL' && (fz.assignedDraftId || proj.draftId) !== parseInt(wsFilterDraft)) {
+                      return false;
+                    }
+                    // กรองสถานะชั้นงานจาก Workspace filter
+                    if (wsFilterStatus !== 'ALL' && fz.status !== wsFilterStatus) {
+                      return false;
+                    }
+                    return true;
                   }) : [];
 
-                  if (filteredFloors.length === 0 && statusFilter !== 'All') return null;
+                  if (filteredFloors.length === 0 && (wsFilterStatus !== 'ALL' || wsFilterDraft !== 'ALL' || (filterOnlyMyWork && currentUser?.role === 'draft'))) return null;
 
                   return (
                     <div key={proj.id} className="glass-panel rounded-xl border border-slate-800/80 overflow-hidden">
@@ -1371,56 +1283,43 @@ export default function App() {
                               const isOverdue = delayRisk === 'OVERDUE';
                               const assignedOwnerDraftId = fz.assignedDraftId || proj.draftId;
                               const isDraft = currentUser && currentUser.role === 'draft' && assignedOwnerDraftId === currentUser.id;
+                              const canEdit = currentUser?.role === 'admin' ||
+                                (currentUser?.role === 'engineer' && proj.engineerId === currentUser.id) ||
+                                (currentUser?.role === 'draft' && (fz.assignedDraftId || proj.draftId) === currentUser.id);
 
                               return (
                                 <div
                                   key={fz.id}
-                                  onClick={() => openFloorEditor(fz, proj)}
-                                  className={`p-2 rounded-lg border cursor-pointer transition-all duration-150 hover:-translate-y-0.5 flex flex-col justify-between h-20 text-left relative ${getStatusStyle(fz.status)}`}
+                                  onClick={() => {
+                                    if (canEdit) openFloorEditor(fz, proj);
+                                  }}
+                                  className={`p-2 rounded-lg border h-20 flex flex-col justify-between relative transition-all duration-150 ${getStatusStyle(fz.status)} ${canEdit ? 'cursor-pointer hover:-translate-y-0.5' : 'cursor-default opacity-60 grayscale-[30%]'}`}
                                 >
                                   <div>
-                                    <div className="flex justify-between items-start gap-1">
-                                      <h3 className="font-bold text-slate-200 text-[11px] truncate w-full" title={fz.name}>
-                                        {fz.name}
-                                      </h3>
-                                      {fz.notes && (
-                                        <FileText className="h-3 w-3 text-amber-400 flex-shrink-0" title="มี Note" />
-                                      )}
+                                    <div className="flex justify-between items-start">
+                                      <h3 className="font-bold text-[11px] truncate text-slate-200">{fz.name}</h3>
+                                      {fz.notes && <FileText className="h-3 w-3 text-amber-400 flex-shrink-0" />}
                                     </div>
                                     <div className="flex gap-1.5 text-[8.5px] text-slate-400 font-mono mt-0.5">
-                                      <span>{workloadConfig.hoursPerSheet}h</span>
-                                      <span>|</span>
-                                      <span>{fz.deadline ? fz.deadline.slice(5) : 'No DL'}</span>
+                                      <span>{workloadConfig.hoursPerSheet}h</span><span>|</span><span>{fz.deadline ? fz.deadline.slice(5) : 'No DL'}</span>
                                     </div>
-                                    {fz.subZones?.length > 0 && (
-                                      <div className="text-[8px] text-purple-300 mt-1 font-bold">
-                                        แยกโซนย่อย {fz.subZones.length} รายการ
-                                      </div>
-                                    )}
                                     <div className="text-[8px] text-slate-500 mt-1 truncate">
-                                      {fz.assignedDraft?.name ? `Assign: ${fz.assignedDraft.name}` : `Assign: ${proj.draft?.name}`}
+                                      Assign: {fz.assignedDraft?.name || proj.draft?.name}
                                     </div>
                                   </div>
 
-                                  {isOverdue && (
-                                    <div className="absolute top-1 right-1 h-2 w-2 rounded-full bg-rose-500 animate-ping"></div>
-                                  )}
+                                  {getDelayRisk(fz) === 'OVERDUE' && <div className="absolute top-1 right-1 h-2 w-2 bg-rose-500 rounded-full animate-ping"></div>}
 
-                                  <div className="mt-auto flex items-center justify-between pt-1 border-t border-slate-850/60">
-                                    <span className="text-[8.5px] font-extrabold truncate w-14">
-                                      {fz.status}
-                                    </span>
-                                    {isDraft && fz.status !== 'มีแบบ Shop แล้ว' && fz.status !== 'ออกของแล้ว' && (
-                                      <button
-                                        onClick={(e) => handleDraftComplete(fz.id, e)}
-                                        className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[8px] font-bold transition-all shadow-md"
-                                      >
+                                  <div className="mt-auto flex justify-between items-center pt-1 border-t border-slate-850/60">
+                                    <span className="text-[8.5px] font-extrabold truncate w-14">{fz.status}</span>
+                                    {currentUser?.role === 'draft' && (fz.assignedDraftId || proj.draftId) === currentUser.id && fz.status !== 'มีแบบ Shop แล้ว' && fz.status !== 'ออกของแล้ว' && (
+                                      <button onClick={(e) => handleDraftComplete(fz.id, e)} className="bg-emerald-600 hover:bg-emerald-500 text-white rounded p-1 shadow-md transition-all">
                                         <Check className="h-2.5 w-2.5" />
                                       </button>
                                     )}
                                   </div>
                                 </div>
-                              );
+                              )
                             })}
                           </div>
 
@@ -1460,6 +1359,8 @@ export default function App() {
             </div>
           </div>
         )}
+
+
 
         {/* TAB 2: ANALYTICAL DASHBOARD */}
         {activeTab === 'dashboard' && (
@@ -1532,15 +1433,10 @@ export default function App() {
                             <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.round(Math.min(100, (draft.estimatedHours / 40) * 100))}%` }}></div>
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-center text-xs bg-slate-950 p-2 rounded">
-                          <div>
-                            <span className="text-[10px] text-slate-500">จำนวนชั้น/โซน (แผ่น)</span>
-                            <span className="block font-bold text-brand-300">{draft.activeFloors} ชั้น</span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-500">ภาระงานสะสมคิว</span>
-                            <span className="block font-extrabold text-cyan-300">{draft.estimatedHours} ชั่วโมง</span>
-                          </div>
+                        <div className="grid grid-cols-3 gap-4 text-center text-xs bg-slate-950 p-2 rounded">
+                          <div><span className="text-[10px] text-slate-500">โครงการดูแล</span><span className="block font-bold text-slate-300">{calculateDraftProjectsCount(draft.id)}</span></div>
+                          <div><span className="text-[10px] text-slate-500">จำนวนชั้น (แผ่น)</span><span className="block font-bold text-brand-300">{draft.activeFloors}</span></div>
+                          <div><span className="text-[10px] text-slate-500">ภาระงานสะสม</span><span className="block font-bold text-cyan-300">{draft.estimatedHours} ชม.</span></div>
                         </div>
                       </div>
                     );
@@ -1638,699 +1534,821 @@ export default function App() {
             </div>
           </div>
         )}
-        {/* TAB ปฏิทิน (CALENDAR & TIMELINE VIEW) */}
+        {/* TAB 4: CALENDAR */}
         {activeTab === 'calendar' && (
-          <div className="space-y-6 animate-fadeIn">
-
-            {/* Header ปฏิทิน + ระบบ Filter */}
-            <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-left">
+          <div className="space-y-6">
+            <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-left">
               <div>
-                <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
-                  <Calendar className="h-5 w-5 text-brand-400" />
-                  กระดานปฏิทินและจัดคิวงาน (Interactive Board)
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  สามารถลาก-วาง การ์ดงานเพื่อเปลี่ยน Deadline หรือสลับผู้รับผิดชอบได้ทันที (Drag & Drop)
-                </p>
+                <h2 className="text-lg font-bold text-slate-200"><Calendar className="h-5 w-5 text-brand-400 inline mr-2" /> ปฏิทินกำหนดส่งงาน (Timeline Board)</h2>
+                <p className="text-xs text-slate-400">สลับโหมด เดือน/สัปดาห์/วัน ได้อิสระ (ลากการ์ดเพื่อเปลี่ยนวันเดดไลน์ หรือเปลี่ยนดร๊าฟ)</p>
               </div>
-
-              {/* ตัวกรอง (Filters) */}
               <div className="flex gap-3 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400">👨‍🔧 วิศวกร:</span>
-                  <select
-                    className="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1"
-                    value={calendarFilterEng}
-                    onChange={(e) => setCalendarFilterEng(e.target.value)}
-                  >
-                    <option value="ALL">ทุกคน</option>
-                    {users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400">📐 ดร๊าฟ:</span>
-                  <select
-                    className="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1"
-                    value={calendarFilterDraft}
-                    onChange={(e) => setCalendarFilterDraft(e.target.value)}
-                  >
-                    <option value="ALL">ทุกคน</option>
-                    {users.filter(u => u.role === 'draft').map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </select>
-                </div>
+                <select className="bg-slate-800 text-slate-200 rounded-lg px-3 py-1.5 border border-slate-700" value={calendarFilterEng} onChange={(e) => setCalendarFilterEng(e.target.value)}><option value="ALL">👨‍🔧 วิศวกรทุกคน</option>{users.filter(u => u.role === 'engineer' || u.role === 'admin').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+                <select className="bg-slate-800 text-slate-200 rounded-lg px-3 py-1.5 border border-slate-700" value={calendarFilterDraft} onChange={(e) => setCalendarFilterDraft(e.target.value)}><option value="ALL">📐 ดร๊าฟทุกคน</option>{users.filter(u => u.role === 'draft').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
               </div>
             </div>
 
-            {/* ส่วนแสดงปฏิทิน */}
-            <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-100 h-[750px] overflow-hidden">
-              <style dangerouslySetInnerHTML={{
-                __html: `
-                .rbc-calendar { font-family: 'Sarabun', sans-serif; color: #1e293b; background: white; border-radius: 8px; padding: 10px; }
-                .rbc-toolbar button { color: #334155; border-color: #cbd5e1; }
-                .rbc-toolbar button.rbc-active { background-color: #e2e8f0; color: #0f172a; font-weight: bold; }
-                .rbc-header { padding: 8px; font-weight: bold; background: #f8fafc; }
-                .rbc-event { padding: 4px; font-size: 11px; font-weight: bold; margin-bottom: 3px; border-radius: 4px;}
-                
-                /* ซ่อนตารางเวลาเวลาดูคิวรายคน */
-                .rbc-time-gutter { display: none !important; } 
-                .rbc-allday-cell { display: none !important; } 
-                .rbc-timeslot-group { border-bottom: none !important; } 
-                .rbc-time-content { border-top: none !important; }
-              `}} />
+            {/* 🌟 ปรับ Layout เป็น 2 คอลัมน์: แถบสี (ซ้าย) และ ปฏิทิน (ขวา) */}
+            <div className="flex flex-col xl:flex-row gap-6 items-start">
 
-              <DnDCalendar
-                localizer={localizer}
-                culture="th"
-                onEventDrop={handleEventDrop} // ผูกฟังก์ชัน Drag & Drop
-                resizable={false} // ไม่ให้ยืดหดขนาดเวลาได้
-                events={(() => {
-                  const draftName = ownerDraft?.name || 'ไม่ระบุ';
-                  const projName = proj.name || proj.projectName || 'ไม่ระบุชื่อโครงการ'; // ข้อ 1: กัน undefined
-                  const initials = getInitials(draftName); // ข้อ 2: ดึงชื่อย่อดร๊าฟ
+              {/* แถบ Sidebar แสดงสัญลักษณ์สี และ จำนวนงานของดร๊าฟ */}
+              <div className="w-full xl:w-64 flex flex-col gap-4 flex-shrink-0">
+                <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/60 sticky top-24">
+                  <h3 className="text-sm font-bold text-slate-200 mb-3 border-b border-slate-800 pb-2 flex items-center gap-2">
+                    🎨 สัญลักษณ์สี (Drafts)
+                  </h3>
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                    {users.filter(u => u.role === 'draft').map(u => {
+                      // ดึงค่าสีให้ตรงกับในปฏิทินเป๊ะๆ
+                      const colors = ['#f43f5e', '#8b5cf6', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#3b82f6'];
+                      const dotColor = colors[u.id % colors.length];
 
-                  evts.push({
-                    id: fz.id,
-                    projectId: proj.id,
-                    zoneId: fz.id,
-                    title: `[${initials}] ${fz.name}`, // โชว์ชื่อย่อดร๊าฟแทนชื่อยาวๆ บนการ์ด
-                    projectName: projName,
-                    engName: ownerEng?.name || 'N/A',
-                    draftName: draftName,
-                    status: fz.status,
-                    isOverdue: risk === 'OVERDUE',
-                    start: startDate,
-                    end: endDate,
-                    allDay: false,
-                    resourceId: ownerDraftId
-                  });
-                  // ...
-                })()}
+                      // คำนวณหาว่ามีกี่ "ชั้น/โซน" (งาน) ที่ยังทำไม่เสร็จและลงปฏิทินไว้
+                      let activeTasks = 0;
+                      projects.filter(p => !p.isArchived).forEach(p => {
+                        p.floorZones?.forEach(fz => {
+                          if (fz.deadline && !COMPLETED_STATUSES.has(fz.status)) {
+                            const ownerDraftId = fz.assignedDraftId || p.draftId;
+                            if (ownerDraftId === u.id) activeTasks++;
+                          }
+                        });
+                      });
 
-                // ...
+                      return (
+                        <div key={u.id} className="flex justify-between items-center bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+                          <div className="flex items-center gap-2.5 truncate">
+                            <span className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-sm border border-slate-800/50" style={{ backgroundColor: dotColor }}></span>
+                            <span className="text-xs text-slate-200 truncate font-semibold">{u.name}</span>
+                          </div>
+                          <span className="text-[10px] font-extrabold bg-slate-950 px-2 py-1 rounded text-brand-400 flex-shrink-0 shadow-inner">
+                            {activeTasks} งาน
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 text-[9px] text-slate-500 bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
+                    💡 ตัวเลขคือจำนวนชั้น/โซนที่มีเดดไลน์และยังทำไม่เสร็จ
+                  </div>
+                </div>
+              </div>
 
-                components={{
-                  event: ({ event }) => (
-                    // ข้อ 3: เอา title="" ออก เพื่อลบ Tooltip ดำๆ แบบเก่า
-                    <div className="w-full h-full cursor-pointer flex items-center gap-1">
-                      {event.isOverdue && <span className="text-red-600 animate-pulse">🚨</span>}
-                      <span className="truncate">{event.title}</span>
-                    </div>
-                  )
-                }}
-                // --- ส่วนกำหนดสีตามสถานะ ---
-                eventPropGetter={(event) => {
-                  let bgColor = '#cbd5e1'; // สีเทา (รอ Framing / อื่นๆ)
-                  let textColor = '#0f172a';
+              {/* กระดานปฏิทิน (Main Board) */}
+              <div className="glass-panel p-5 rounded-2xl border border-slate-800 bg-slate-50 h-[850px] flex-1 min-w-0 w-full">
+                <style dangerouslySetInnerHTML={{
+                  __html: `
+                  .rbc-calendar { font-family: 'Sarabun', sans-serif; background: transparent; border-radius: 12px; } 
+                  .rbc-header { padding: 12px 0; font-weight: 800; color: #475569; border-bottom: 2px solid #e2e8f0; font-size: 13px; }
+                  .rbc-month-view { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: white; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+                  .rbc-date-cell { padding: 4px 8px; font-weight: 700; color: #64748b; font-size: 12px; }
+                  
+                  /* การ์ดปฏิทิน Hover ธรรมดา ไม่ขยายตารางแล้ว */
+                  .rbc-event { padding: 0 !important; margin: 1px 0 !important; border-radius: 0 !important; background: transparent !important; }
+                  .rbc-event:hover { z-index: 10; background: transparent !important; }
+                  .rbc-time-view .rbc-time-content { display: none !important; } 
+                  .rbc-time-view .rbc-allday-cell { min-height: 650px; max-height: none !important; overflow-y: auto; background: white; border-radius: 12px;}
+                  .rbc-time-view .rbc-time-header { flex: 1 1 0% !important; border-bottom: none !important; }
+                  .rbc-time-gutter { display: none !important; } 
+                  .rbc-time-header-content { border-left: none !important; }
+                  .rbc-time-view { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
+                  .rbc-show-more { background-color: #f8fafc; color: #3b82f6 !important; font-size: 11px; font-weight: 800; padding: 4px 8px; border-radius: 6px; text-align: center; margin: 2px 4px; border: 1px solid #e2e8f0; }
+                  .rbc-show-more:hover { background-color: #eff6ff; color: #1d4ed8 !important; }
+                ` }} />
+                <DnDCalendar
+                  localizer={localizer}
+                  culture="th"
+                  onEventDrop={handleEventDrop}
+                  views={[Views.MONTH, Views.WEEK, Views.DAY]}
+                  defaultView={Views.MONTH}
+                  popup={true}
+                  messages={{
+                    showMore: (total) => `+ ดูเพิ่ม ${total} งาน`,
+                    today: 'วันนี้', previous: '< ก่อนหน้า', next: 'ถัดไป >',
+                    month: 'เดือน', week: 'สัปดาห์', day: 'วัน', noEventsInRange: 'ไม่มีคิวงาน'
+                  }}
+                  events={(() => {
+                    const evts = [];
+                    projects.filter(p => !p.isArchived).forEach(proj => {
+                      if (calendarFilterEng !== 'ALL' && proj.engineerId !== parseInt(calendarFilterEng)) return;
 
-                  if (event.status === 'พร้อมทำ Shop') bgColor = '#bae6fd'; // สีฟ้า
-                  if (event.status === 'กำลังทำ Shop') bgColor = '#fef08a'; // สีเหลือง
-                  if (event.status === 'มีแบบ Shop แล้ว') bgColor = '#86efac'; // สีเขียว
-                  if (event.status === 'มีการ Revise') { bgColor = '#f87171'; textColor = 'white'; } // สีแดง
+                      proj.floorZones?.forEach(fz => {
+                        if (fz.deadline && !COMPLETED_STATUSES.has(fz.status)) {
+                          const ownerDraftId = fz.assignedDraftId || proj.draftId;
+                          if (calendarFilterDraft !== 'ALL' && ownerDraftId !== parseInt(calendarFilterDraft)) return;
+                          if (currentUser?.role === 'draft' && ownerDraftId !== currentUser.id) return;
 
-                  let borderStyle = event.isOverdue ? '2px solid #ef4444' : 'none'; // กรอบแดงถ่างเลยกำหนด
+                          const targetDate = new Date(fz.deadline);
+                          targetDate.setHours(0, 0, 0, 0);
 
-                  return { style: { backgroundColor: bgColor, color: textColor, border: borderStyle } };
-                }}
+                          evts.push({
+                            id: fz.id, projectId: proj.id, zoneId: fz.id,
+                            projectNumber: proj.projectNumber,
+                            projectName: proj.projectName || 'ไม่ระบุชื่อ',
+                            zoneName: fz.name,
+                            engName: users.find(u => u.id === proj.engineerId)?.name || 'N/A',
+                            draftName: users.find(u => u.id === ownerDraftId)?.name || 'ไม่ระบุดร๊าฟ',
+                            draftId: ownerDraftId,
+                            status: fz.status, isOverdue: getDelayRisk(fz) === 'OVERDUE',
+                            start: targetDate, end: targetDate,
+                            allDay: true,
+                            resourceId: ownerDraftId
+                          });
+                        }
+                      });
+                    });
+                    return evts;
+                  })()}
+                  step={60}
+                  eventPropGetter={(event) => {
+                    // เอาสีพื้นหลังและกรอบออกทั้งหมด ให้การ์ดโปร่งใส (มินิมอล)
+                    return {
+                      style: {
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        boxShadow: 'none',
+                        padding: '0'
+                      }
+                    };
+                  }}
+                  components={{
+                    event: ({ event }) => {
+                      const colors = ['#f43f5e', '#8b5cf6', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#3b82f6'];
+                      const dotColor = event.draftId ? colors[event.draftId % colors.length] : '#94a3b8';
+                      return (
+                        <div
+                          className="w-full flex items-center justify-center gap-1.5 py-0.5 cursor-pointer hover:scale-125 transition-transform"
+                          // เพิ่ม Tooltip ให้ชี้แล้วเห็นชื่อคนทำและชื่อโปรเจกต์ชัดๆ ทันที
+                          title={`โครงการ: [${event.projectNumber}] ${event.projectName}\nดร๊าฟ: ${event.draftName}\nสถานะ: ${event.status}`}
+                        >
+                          {/* 🌟 โชว์จุดสีดร๊าฟเสมอ (จะได้รู้ว่างานใคร) */}
+                          <span className="w-3.5 h-3.5 rounded-full shadow-sm border border-slate-400/50 flex-shrink-0" style={{ backgroundColor: dotColor }}></span>
 
-                // --- ส่วนทำ Tooltip & Custom Card UI ---
-                components={{
-                  event: ({ event }) => (
-                    <div
-                      title={`โครงการ: ${event.projectName}\nชั้น/โซน: ${event.title}\nวิศวกร: ${event.engName}\nดร๊าฟ: ${event.draftName}\nสถานะ: ${event.status}${event.isOverdue ? '\n🚨 เลยกำหนดส่ง!' : ''}`}
-                      className="w-full h-full cursor-pointer"
-                    >
-                      <div className="flex items-center gap-1">
-                        {event.isOverdue && <span className="text-red-600 animate-pulse">🚨</span>}
-                        <span className="truncate">{event.title}</span>
+                          {/* 🌟 ถ้าเลยกำหนด ค่อยโชว์ไซเรนข้างๆ จุดสี */}
+                          {event.isOverdue && (
+                            <span className="text-red-600 animate-pulse text-[12px] leading-none">🚨</span>
+                          )}
+                        </div>
+                      )
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            {/* ======================================================== */}
+            {/* 🌟 Gantt Chart 14 วัน สำหรับดร๊าฟ */}
+            {/* ======================================================== */}
+            {/* ======================================================== */}
+            {/* 🌟 Gantt Chart 14 วัน สำหรับดร๊าฟ */}
+            {/* ======================================================== */}
+            <div className="glass-panel p-6 rounded-2xl overflow-hidden mt-6 border border-slate-800">
+              <h3 className="text-base font-bold text-slate-200 mb-4 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-brand-400" /> ตารางคิวงาน (Gantt Chart 14 วัน)
+              </h3>
+              <div className="overflow-x-auto pb-2 custom-scrollbar">
+                <div className="min-w-[1200px]">
+
+                  {/* Calendar Header (Dates) */}
+                  <div className="flex border-b border-slate-800 pb-2 mb-2">
+                    <div className="w-32 flex-shrink-0 font-bold text-xs text-slate-400 pl-2">ดร๊าฟ / วันที่</div>
+                    {ganttDates.map((d, i) => {
+                      const dateStr = d.toISOString().split('T')[0];
+                      const isToday = d.toDateString() === new Date().toDateString();
+
+                      const isSunday = d.getDay() === 0;
+                      // ใส่ fallback (|| []) ป้องกันจอดำกรณีที่หาตัวแปร customHolidays ไม่เจอ
+                      const isCustomHoliday = (typeof customHolidays !== 'undefined' ? customHolidays : []).includes(dateStr);
+                      const isHoliday = isSunday || isCustomHoliday;
+
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => typeof toggleHoliday !== 'undefined' && toggleHoliday(dateStr)}
+                          title="คลิกเพื่อตั้ง/ยกเลิก วันหยุดพิเศษ"
+                          className={`flex-1 text-center text-[10px] font-bold cursor-pointer transition-all hover:bg-slate-800/50
+                            ${isToday ? 'text-brand-400 bg-brand-500/10 rounded py-1 border border-brand-500/20' : 'text-slate-500'} 
+                            ${isHoliday && !isToday ? 'text-rose-400 bg-rose-950/20 rounded py-1 border border-rose-900/30' : ''}`}
+                        >
+                          {d.toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' })}
+                          {isCustomHoliday && <span className="block text-[8px] text-rose-500 mt-0.5">🛑 วันหยุด</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Draft Rows */}
+                  {users.filter(u => u.role === 'draft').map(dr => (
+                    <div key={dr.id} className="flex items-stretch border-b border-slate-800/50 py-3 hover:bg-slate-900/30 group transition-colors">
+                      <div className="w-32 flex-shrink-0 text-xs font-semibold text-slate-200 truncate pr-2 flex items-center pl-2" title={dr.name}>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: ['#f43f5e', '#8b5cf6', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#3b82f6'][dr.id % 7] }}></span>
+                          {dr.name}
+                        </div>
                       </div>
-                    </div>
-                  )
-                }}
 
-                messages={{
-                  today: 'วันนี้', previous: 'ย้อนหลัง', next: 'ถัดไป',
-                  month: 'ปฏิทินรวม (Month)', day: 'ดูคิวแยกรายคน (Board)',
-                  noEventsInRange: 'ไม่มีคิวงานในช่วงนี้'
-                }}
-              />
+                      {/* Cells for each day */}
+                      {ganttDates.map((d, i) => {
+                        const targetDateStr = d.toISOString().split('T')[0];
+                        const dayTasks = [];
+
+                        projects.filter(p => !p.isArchived).forEach(p => {
+                          p.floorZones?.forEach(fz => {
+                            if (fz.deadline === targetDateStr && !COMPLETED_STATUSES.has(fz.status) && (fz.assignedDraftId || p.draftId) === dr.id) {
+                              dayTasks.push({ proj: p, fz: fz });
+                            }
+                          });
+                        });
+
+                        const isSunday = d.getDay() === 0;
+                        const isHoliday = isSunday || (typeof customHolidays !== 'undefined' ? customHolidays : []).includes(targetDateStr);
+                        const isToday = d.toDateString() === new Date().toDateString();
+
+                        return (
+                          <div
+                            key={i}
+                            // 🌟 บังคับ min-w-0 และใส่ Scrollbar เฉพาะช่องที่งานเยอะ
+                            className={`flex-1 min-w-0 flex flex-col gap-1.5 px-1 min-h-[40px] max-h-[140px] overflow-y-auto overflow-x-hidden border-l border-slate-800/30 justify-start items-center pt-1 pb-1
+                            ${isToday ? 'bg-brand-950/10' : ''} ${isHoliday ? 'bg-rose-950/10' : ''}`}
+                          >
+                            {dayTasks.map((task, idx) => {
+                              const isOverdue = getDelayRisk(task.fz) === 'OVERDUE';
+                              const canEdit = currentUser?.role === 'admin' ||
+                                (currentUser?.role === 'engineer' && task.proj.engineerId === currentUser.id) ||
+                                (currentUser?.role === 'draft' && (task.fz.assignedDraftId || task.proj.draftId) === currentUser.id);
+
+                              const engName = users.find(u => u.id === task.proj.engineerId)?.name || 'ไม่ระบุ';
+
+                              return (
+                                <div
+                                  key={task.fz.id}
+                                  title={`โครงการ: [${task.proj.projectNumber}] ${task.proj.projectName}\nชั้น/โซน: ${task.fz.name}\nสถานะ: ${task.fz.status}\nวิศวกร: ${engName}`}
+                                  // 🌟 ห้ามการ์ดโดนบีบด้วย flex-shrink-0
+                                  className={`w-full overflow-hidden flex-shrink-0 text-left rounded-md border p-1 shadow-sm relative transition-transform flex flex-col gap-0.5 ${getStatusStyle(task.fz.status)} ${canEdit ? 'cursor-pointer hover:-translate-y-0.5' : 'cursor-default opacity-60 grayscale-[30%]'}`}
+                                  onClick={() => {
+                                    if (canEdit) openFloorEditor(task.fz, task.proj);
+                                  }}
+                                >
+                                  <div className="flex items-center gap-1 w-full overflow-hidden">
+                                    {isOverdue && <span className="text-red-600 animate-pulse text-[8px] flex-shrink-0">🚨</span>}
+                                    <span className="font-extrabold text-[8px] truncate opacity-90 block">
+                                      [{task.proj.projectNumber}] {task.proj.projectName}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-[8px] font-bold truncate opacity-85 pl-0.5 w-full block">
+                                    📌 {task.fz.name}
+                                  </div>
+
+                                  <div className="text-[7.5px] font-semibold truncate opacity-70 pl-0.5 w-full block">
+                                    👨‍🔧 {engName}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-slate-900/60 p-3 mt-4 rounded-xl flex gap-6 text-[10px] text-slate-400 font-medium border border-slate-800 flex-wrap">
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-brand-500/20 border border-brand-500/50"></span> วันนี้ (Today)</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-rose-950/20 border border-rose-900/30"></span> วันหยุด (อาทิตย์ & วันหยุดพิเศษ)</div>
+                <div className="flex items-center gap-1.5">🖱️ คลิกที่การ์ดเพื่อแก้ไข</div>
+                <div className="flex items-center gap-1.5 text-brand-300">💡 วิศวกร/Admin สามารถคลิกที่ชื่อ "วัน/เดือน" ด้านบนตาราง เพื่อตั้งค่าเป็นวันหยุดพิเศษได้</div>
+              </div>
+            </div>
+            {/* ======================================================== */}
+          </div>
+        )}
+        {/* ========================================= */}
+        {/* TAB 5: ADMIN PANEL (ส่วนที่ระบบขาดไป) */}
+        {/* ========================================= */}
+        {activeTab === 'admin' && (
+  <div className="space-y-6 animate-fadeIn text-left">
+    <div className="glass-panel p-6 rounded-2xl border border-slate-800 bg-slate-900/40">
+      <h2 className="text-lg font-bold text-slate-200 mb-4 flex items-center gap-2">
+        <Sliders className="h-5 w-5 text-brand-400" /> แผงควบคุมผู้ดูแลระบบ (Admin Control Panel)
+      </h2>
+
+      {/* ปุ่มสลับแท็บย่อย (Sub Tabs) */}
+      <div className="flex gap-4 border-b border-slate-800 mb-6">
+        <button
+          onClick={() => setAdminSubTab('users')}
+          className={`pb-2 text-xs font-bold border-b-2 transition-all ${
+            adminSubTab === 'users' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'
+          }`}
+        >
+          จัดการผู้ใช้งาน ({adminUsersList.length})
+        </button>
+        <button
+          onClick={() => setAdminSubTab('workload')}
+          className={`pb-2 text-xs font-bold border-b-2 transition-all ${
+            adminSubTab === 'workload' ? 'border-brand-500 text-brand-400' : 'border-transparent text-slate-400'
+          }`}
+        >
+          ตั้งค่าเกณฑ์ควบคุม Workload
+        </button>
+      </div>
+
+      {/* ส่วนย่อยที่ 1: ตารางจัดการสิทธิ์ผู้ใช้งาน */}
+      {adminSubTab === 'users' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-slate-400">รายชื่อบัญชีผู้ใช้ทั้งหมดในระบบ</span>
+            <button
+              onClick={() => setIsCreateUserOpen(true)}
+              className="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow-md shadow-brand-500/10 transition-all"
+            >
+              <UserPlus className="h-3.5 w-3.5" /> เพิ่มผู้ใช้งานใหม่
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-800/80">
+            <table className="w-full text-xs text-left text-slate-300">
+              <thead className="bg-slate-950 text-slate-400 font-mono border-b border-slate-800">
+                <tr>
+                  <th className="p-3">ชื่อ-นามสกุล</th>
+                  <th className="p-3">อีเมลบัญชี</th>
+                  <th className="p-3">ตำแหน่ง (Role)</th>
+                  <th className="p-3 text-right">การจัดการ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-900 bg-slate-900/20">
+                {adminUsersList.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="p-4 text-center text-slate-500 italic">ไม่พบข้อมูลผู้ใช้งาน</td>
+                  </tr>
+                ) : (
+                  adminUsersList.map(u => (
+                    <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
+                      <td className="p-3 font-semibold text-slate-200">{u.name}</td>
+                      <td className="p-3 font-mono text-slate-400">{u.email}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          u.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+                          u.role === 'engineer' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                          'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        }`}>
+                          {u.role.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right space-x-2">
+                        <button
+                          onClick={() => {
+                            setSelectedUserForEdit(u);
+                            setUserFormName(u.name);
+                            setUserFormEmail(u.email);
+                            setUserFormRole(u.role);
+                            setUserFormPassword('');
+                            setIsEditUserOpen(true);
+                          }}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-medium transition-colors"
+                        >
+                          แก้ไข
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(u.id)}
+                          className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded font-medium transition-colors"
+                        >
+                          ลบ
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ส่วนย่อยที่ 2: ฟอร์มตั้งค่าสูตรคำนวณภาระงาน (Workload) */}
+      {adminSubTab === 'workload' && (
+        <form onSubmit={handleSaveSettings} className="space-y-4 max-w-md">
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+              จำนวนชั่วโมงเฉลี่ย ต่อการทำแบบ 1 แผ่น (ชั้นย่อย)
+            </label>
+            <input
+              type="number" step="0.1" required
+              className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+              value={cfgHoursPerSheet} onChange={(e) => setCfgHoursPerSheet(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+              ขีดจำกัดจำนวนแผ่นสูงสุดสะสมต่อคน (Max Sheets Threshold)
+            </label>
+            <input
+              type="number" required
+              className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+              value={cfgMaxSheets} onChange={(e) => setCfgMaxSheets(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+              จำนวนวันแจ้งเตือนความเสี่ยงล่วงหน้า (Warning Days Thresholdก่อนเดดไลน์)
+            </label>
+            <input
+              type="number" required
+              className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+              value={cfgWarningDays} onChange={(e) => setCfgWarningDays(e.target.value)}
+            />
+          </div>
+          
+          <div className="pt-2">
+            <button
+              type="submit"
+              className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-1"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" /> บันทึกข้อกำหนดระบบ
+            </button>
+          </div>
+        </form>
+      )}
+
+    </div>
+  </div>
+)}
+        {/* CREATE PROJECT MODAL */}
+        {isCreateProjectOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden border border-slate-800 animate-scaleUp">
+              <div className="px-6 py-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
+                <h3 className="font-bold text-slate-200">สร้างแบบแปลนและโครงสร้างแผนงาน (Grid Plan)</h3>
+                <button onClick={() => setIsCreateProjectOpen(false)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
+              </div>
+              <form onSubmit={handleCreateProject}>
+                <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-left">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">เลขที่โครงการ *</label>
+                      <input type="text" required placeholder="เช่น P2601" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-mono"
+                        value={newProjectNumber} onChange={(e) => setNewProjectNumber(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ชื่อโครงการ *</label>
+                      <input type="text" required placeholder="เช่น โครงการคอนโดมิเนียมแกรนด์แวลลีย์" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200"
+                        value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">วิศวกรผู้ควบคุม</label>
+                      {currentUser?.role === 'engineer' ? (
+                        <input
+                          type="text"
+                          readOnly
+                          className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 font-semibold opacity-80"
+                          value={currentUser.name}
+                        />
+                      ) : (
+                        <select className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350 font-semibold"
+                          value={newEngineerId} onChange={(e) => setNewEngineerId(e.target.value)}>
+                          <option value="">เลือกวิศวกร</option>
+                          {users.filter(u => u.role === 'engineer').map(eng => <option key={eng.id} value={eng.id}>{eng.name}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ผู้จัดทำแบบ (Draftsperson)</label>
+                      <select className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350 font-semibold"
+                        value={newDraftId} onChange={(e) => setNewDraftId(e.target.value)}>
+                        <option value="">เลือกดร๊าฟแบบ</option>
+                        {users.filter(u => u.role === 'draft').map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="p-4 bg-slate-900/40 border border-slate-800 rounded-xl space-y-3">
+                    <label className="block text-xs font-bold text-brand-300 uppercase">รายชื่อชั้น/โซนที่ต้องสร้าง (แยกด้วย , หรือช่วง 1-5) * 1 ชั้น = 1 แผ่นเสมอ</label>
+
+                    {/* 🌟 จัดกลุ่ม Input และ Checkbox ไว้ด้วยกัน */}
+                    <div className="space-y-2">
+                      <input type="text" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-bold"
+                        placeholder="1-3, 11, 14-16 หรือ Floor 1, Floor 2"
+                        value={newFloorInputText} onChange={(e) => setNewFloorInputText(e.target.value)} />
+
+                      {/* 🌟 จุดที่เพิ่ม Checkbox เข้ามา */}
+                      <label className="flex items-center gap-2 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={autoExpandFloors}
+                          onChange={e => setAutoExpandFloors(e.target.checked)}
+                          className="w-3.5 h-3.5 accent-brand-500 rounded border-slate-600"
+                        />
+                        <span className="text-[11px] font-semibold">ขยายช่วงอัตโนมัติ (เช่น พิมพ์ `2-5` จะแยกสร้างเป็นชั้น 2, 3, 4, 5 ให้)</span>
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 uppercase">กำหนดเดดไลน์ของทุกชั้น (ปล่อยว่างได้)</label>
+                      <input type="date" className="glass-input w-full px-3 py-1.5 rounded text-sm text-slate-300"
+                        value={defaultDeadline} onChange={(e) => setDefaultDeadline(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+                <div className="px-6 py-4 bg-slate-900 border-t border-slate-800 flex justify-end gap-3">
+                  <button type="button" onClick={() => setIsCreateProjectOpen(false)} className="px-4 py-2 text-slate-400 text-sm">ยกเลิก</button>
+                  <button type="submit" className="px-5 py-2 bg-brand-600 rounded text-white font-bold text-sm hover:bg-brand-500 transition-colors">สร้างคิวโครงการ & Grid</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
-        {/* TAB 4: ADMIN PORTAL */}
-        {activeTab === 'admin' && currentUser && currentUser.role === 'admin' && (
-          <div className="space-y-8 animate-fadeIn text-left">
-            <div className="glass-panel p-6 rounded-2xl border border-slate-850">
 
-              <div className="flex justify-between items-center border-b border-slate-850 pb-4 mb-6">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
-                    <SettingsIcon className="h-5 w-5 text-brand-400" />
-                    แผงควบคุมหลักฝ่าย Admin (Back-Office Admin Desk)
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    ระบบดูแลรายชื่อผู้ใช้งานทั้งหมดในบริษัท และกำหนดสูตรการคิด Workload แบบ Real-time (1 ชั้น = 1 แผ่นงานเสมอ)
-                  </p>
+        {/* FLOOR EDIT MODAL */}
+        {isFloorEditOpen && selectedFloor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden border border-slate-800 flex flex-col md:flex-row animate-scaleUp">
+
+              <div className="flex-grow p-6 space-y-4 border-r border-slate-800 text-left">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+                  <h3 className="font-bold text-slate-200 text-base flex items-center gap-2">
+                    <Wrench className="h-5 w-5 text-brand-400" />
+                    แผงจัดการแก้ไขชั้นงานย่อย (Floor Editor)
+                  </h3>
+
+                  {currentUser && currentUser.role === 'engineer' && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleSoftDeleteFloorZone(selectedFloor.id, e)}
+                      className="p-2 hover:bg-slate-900 border border-transparent hover:border-rose-500 rounded-lg text-slate-400 hover:text-rose-500 transition-all flex items-center gap-1"
+                      title="ลบชั้นย่อยนี้"
+                    >
+                      <Trash2 className="h-4 w-4 animate-fadeIn" /> <span className="text-xs font-bold">ลบชั้นงาน (Soft Delete)</span>
+                    </button>
+                  )}
                 </div>
 
-                <div className="flex gap-2 bg-slate-950 p-1 rounded-xl border border-slate-850">
-                  <button
-                    onClick={() => setAdminSubTab('users')}
-                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${adminSubTab === 'users' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                  >
-                    จัดการผู้ใช้งาน
-                  </button>
-                  <button
-                    onClick={() => setAdminSubTab('workload')}
-                    className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${adminSubTab === 'workload' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                  >
-                    ตั้งค่าเกณฑ์เกลี่ยงาน
-                  </button>
+                <form onSubmit={handleUpdateFloorZone} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ชื่อชั้น / โซนร่างแบบ</label>
+                      <input type="text" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-bold"
+                        value={editFloorName} onChange={(e) => setEditFloorName(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">กำหนดเดดไลน์ส่งแบบ</label>
+                      <input type="date" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350"
+                        value={editFloorDeadline} onChange={(e) => setEditFloorDeadline(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">มอบหมายดร๊าฟผู้รับผิดชอบ</label>
+                      {currentUser && currentUser.role === 'draft' ? (
+                        <input
+                          type="text"
+                          readOnly
+                          className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 opacity-80"
+                          value={users.find(u => u.id === parseInt(editAssignedDraftId || editFloorProjectDraftId, 10))?.name || 'ไม่ระบุ'}
+                        />
+                      ) : (
+                        <select
+                          className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 font-semibold"
+                          value={editAssignedDraftId}
+                          onChange={(e) => setEditAssignedDraftId(e.target.value)}
+                        >
+                          <option value="">ใช้ดร๊าฟเดิมของโครงการ</option>
+                          {users.filter(u => u.role === 'draft').map(dr => (
+                            <option key={dr.id} value={dr.id}>{dr.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ปรับเปลี่ยนตามช่วงสถานะงานคิว (Status Flow)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {STATUS_FLOW.map(st => {
+                        const isActive = editFloorStatus === st;
+                        return (
+                          <button key={st} type="button" onClick={() => setEditFloorStatus(st)}
+                            className={`px-3 py-2 rounded-lg text-xs font-bold transition-all border ${isActive ? 'bg-brand-600 border-brand-500 text-white shadow' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'}`}>
+                            {st}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">หมายเหตุเพิ่มเติม</label>
+                    <textarea
+                      rows="2"
+                      className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200"
+                      value={editFloorNotes}
+                      onChange={(e) => setEditFloorNotes(e.target.value)}
+                      readOnly={currentUser && currentUser.role === 'draft'}
+                    ></textarea>
+                    {currentUser && currentUser.role === 'draft' && (
+                      <p className="text-[10px] text-amber-400 mt-1">สถานะ Draft ดู Note ได้อย่างเดียว ไม่สามารถแก้ไขได้</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-4">
+                    <button type="button" onClick={() => setIsFloorEditOpen(false)} className="px-4 py-2 text-slate-400 text-sm">ยกเลิก</button>
+                    <button type="submit" className="px-5 py-2 bg-brand-600 rounded text-white font-bold text-sm">บันทึกการเปลี่ยนแปลง</button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Audit History Log */}
+              <div className="w-full md:w-80 p-6 bg-slate-950 flex flex-col max-h-[85vh] overflow-y-auto text-left">
+                <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-3">ประวัติความคืบหน้า (Audit Trail)</h3>
+                <div className="space-y-4">
+                  {floorHistory.length === 0 ? (
+                    <p className="text-xs text-slate-500 italic py-8 text-center">ไม่มีบันทึกประวัติก่อนหน้านี้</p>
+                  ) : (
+                    floorHistory.map(log => (
+                      <div key={log.id} className="relative pl-5 border-l border-slate-850 pb-2">
+                        <div className="absolute top-1 -left-1.5 h-3 w-3 rounded-full bg-brand-500 border-2 border-slate-950"></div>
+                        <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-[11px]">
+                          <span className="font-bold text-slate-300 block">{log.changedByUser?.name || 'ระบบอัตโนมัติ'}</span>
+                          <div className="flex items-center gap-1.5 font-bold text-brand-300 mt-1">
+                            {log.oldStatus && <span className="text-slate-400 font-normal">{log.oldStatus} ➡️ </span>}
+                            <span>{log.newStatus}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Sub-tab 1: User Management */}
-              {adminSubTab === 'users' && (
-                <div className="space-y-6">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-sm font-extrabold text-slate-300">รายชื่อผู้ใช้งานภายในองค์กร ({adminUsersList.length} คน)</h3>
-                    <button
-                      onClick={() => {
-                        setUserFormName('');
-                        setUserFormEmail('');
-                        setUserFormRole('engineer');
-                        setUserFormPassword('');
-                        setIsCreateUserOpen(true);
-                      }}
-                      className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg text-xs flex items-center gap-1 transition-all"
-                    >
-                      <UserPlus className="h-3.5 w-3.5" /> เพิ่มผู้ใช้งานใหม่
-                    </button>
-                  </div>
+            </div>
+          </div>
+        )}
 
-                  <div className="overflow-x-auto rounded-xl border border-slate-850">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-900/60 text-slate-400 text-[10px] font-bold uppercase tracking-wider border-b border-slate-850">
-                          <th className="p-4">ลำดับ</th>
-                          <th className="p-4">ชื่อ-นามสกุล</th>
-                          <th className="p-4">อีเมลผู้ใช้งาน</th>
-                          <th className="p-4">บทบาท (Role)</th>
-                          <th className="p-4 text-center">จัดการ</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-900 text-slate-200 text-xs">
-                        {adminUsersList.map((usr, idx) => (
-                          <tr key={usr.id} className="hover:bg-slate-900/20 transition-all">
-                            <td className="p-4 font-bold text-slate-400 font-mono">{idx + 1}</td>
-                            <td className="p-4 font-bold text-slate-100">{usr.name}</td>
-                            <td className="p-4 text-slate-350 font-mono">{usr.email}</td>
-                            <td className="p-4">
-                              <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${usr.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
-                                usr.role === 'engineer' ? 'bg-brand-500/10 text-brand-300 border border-brand-500/20' :
-                                  'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-                                }`}>
-                                {usr.role}
-                              </span>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex items-center justify-center gap-2">
-                                <button
-                                  onClick={() => {
-                                    setSelectedUserForEdit(usr);
-                                    setUserFormName(usr.name);
-                                    setUserFormEmail(usr.email);
-                                    setUserFormRole(usr.role);
-                                    setUserFormPassword('');
-                                    setIsEditUserOpen(true);
-                                  }}
-                                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded"
-                                >
-                                  แก้ไข/รหัสผ่าน
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteUser(usr.id)}
-                                  className="p-1 text-slate-500 hover:text-rose-400 transition-all"
-                                  title="ลบผู้ใช้งาน"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+        {/* CREATE USER MODAL (ADMIN ONLY) */}
+        {isCreateUserOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-md rounded-2xl p-6 border border-slate-800 animate-scaleUp text-left">
+              <div className="flex justify-between items-center border-b border-slate-850 pb-2.5 mb-4">
+                <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
+                  <UserPlus className="h-4.5 w-4.5 text-brand-400" /> สร้างรายชื่อผู้ใช้งานใหม่
+                </h3>
+                <button onClick={() => setIsCreateUserOpen(false)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
+              </div>
+              <form onSubmit={handleCreateUser} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุลผู้ใช้</label>
+                  <input
+                    type="text" required placeholder="เช่น ศุภฤกษ์ ตรงจิตสุนทร"
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+                    value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
+                  />
                 </div>
-              )}
-
-              {/* Sub-tab 2: Workload Settings */}
-              {adminSubTab === 'workload' && (
-                <form onSubmit={handleSaveSettings} className="space-y-6 max-w-xl">
-                  <h3 className="text-sm font-extrabold text-slate-300 border-b border-slate-900 pb-2 flex items-center gap-2">
-                    <Sliders className="h-4 w-4 text-brand-400" />
-                    กำหนดเกณฑ์คอขวดและเวลาเฉลี่ย (1 ชั้น = 1 แผ่นเสมอ)
-                  </h3>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                        1. ตัวคูณจำนวนชั่วโมงในการร่างแบบ / 1 ชั้นงาน (ชั่วโมงต่อชั้น)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0.1"
-                        required
-                        className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
-                        value={cfgHoursPerSheet}
-                        onChange={(e) => setCfgHoursPerSheet(e.target.value)}
-                      />
-                      <span className="text-[10px] text-slate-500 block mt-1">
-                        * ปัจจุบันกำหนดสูตร: 1 ชั้น = {cfgHoursPerSheet} ชั่วโมงร่างแบบ (ใช้คำนวณ Work Hours บนแดชบอร์ด)
-                      </span>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                        2. เกณฑ์จำนวนชั้นงานรวมสูงสุดต่อคน (เพดานคุมความตึงเครียดคิวงาน)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
-                        value={cfgMaxSheets}
-                        onChange={(e) => setCfgMaxSheets(e.target.value)}
-                      />
-                      <span className="text-[10px] text-slate-500 block mt-1">
-                        * ระบบจะแสดงสถานะ OVERLOAD เตือนดร๊าฟและฝ่ายวิศวกรหากดร๊าฟมีคิวชั้นงานค้างเกิน {cfgMaxSheets} ชั้น
-                      </span>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                        3. เกณฑ์ระยะวันอันตรายส่งงานไม่ทัน (วันเดดไลน์ฉุกเฉิน)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        className="glass-input w-full px-4 py-2.5 rounded-lg text-sm text-slate-200 font-bold"
-                        value={cfgWarningDays}
-                        onChange={(e) => setCfgWarningDays(e.target.value)}
-                      />
-                      <span className="text-[10px] text-slate-500 block mt-1">
-                        * สถานะการ์ดจะแจ้งเป็นไฟสีส้มเตือนความเสี่ยง (RISK) ทันทีหากงานมีเดดไลน์คงเหลือน้อยกว่า {cfgWarningDays} วัน
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg text-xs shadow-md shadow-brand-500/10"
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลทางการ</label>
+                  <input
+                    type="email" required placeholder="name@syncdraft.com"
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
+                    value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">รหัสผ่านเริ่มต้น</label>
+                  <input
+                    type="password" required placeholder="••••••"
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+                    value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
+                  <select
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
+                    value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
                   >
-                    บันทึกเกณฑ์การคำนวณใหม่
-                  </button>
-                </form>
-              )}
+                    <option value="engineer">วิศวกร (Engineer)</option>
+                    <option value="draft">ดร๊าฟแบบ (Draftsperson)</option>
+                    <option value="admin">ผู้ดูแลระบบ (Admin)</option>
+                  </select>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={() => setIsCreateUserOpen(false)} className="px-4 py-2 text-slate-400 text-xs">ยกเลิก</button>
+                  <button type="submit" className="px-4 py-2 bg-brand-600 rounded text-white font-bold text-xs">ยืนยันสร้างบัญชี</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
+        {/* EDIT USER / PASSWORD MODAL (ADMIN ONLY) */}
+        {isEditUserOpen && selectedUserForEdit && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-md rounded-2xl p-6 border border-slate-800 animate-scaleUp text-left">
+              <div className="flex justify-between items-center border-b border-slate-850 pb-2.5 mb-4">
+                <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
+                  <KeyRound className="h-4.5 w-4.5 text-brand-400" /> แก้ไขโปรไฟล์ / สั่งรีเซ็ตรหัสผ่าน
+                </h3>
+                <button onClick={() => { setIsEditUserOpen(false); setSelectedUserForEdit(null); }} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
+              </div>
+              <form onSubmit={handleEditUserSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุล</label>
+                  <input
+                    type="text" required
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
+                    value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลผู้ใช้งาน</label>
+                  <input
+                    type="email" required
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
+                    value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">เปลี่ยนรหัสผ่าน (กรอกเฉพาะเมื่อต้องการตั้งใหม่)</label>
+                  <input
+                    type="password" placeholder="ว่างไว้หากใช้รหัสเดิม"
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 animate-fadeIn"
+                    value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
+                  <select
+                    className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
+                    value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
+                  >
+                    <option value="engineer">วิศวกร (Engineer)</option>
+                    <option value="draft">ดร๊าฟแบบ (Draftsperson)</option>
+                    <option value="admin">ผู้ดูแลระบบ (Admin)</option>
+                  </select>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={() => { setIsEditUserOpen(false); setSelectedUserForEdit(null); }} className="px-4 py-2 text-slate-400 text-xs">ยกเลิก</button>
+                  <button type="submit" className="px-4 py-2 bg-brand-600 rounded text-white font-bold text-xs">บันทึกข้อมูล</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {/* ========================================= */}
+        {/* MODAL: ดูรายละเอียดงานในปฏิทิน (ข้อ 3) */}
+        {/* ========================================= */}
+        {selectedEvent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fadeIn">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-3 rounded-xl bg-brand-500/20 text-brand-400">
+                  <Calendar className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white">{selectedEvent.projectName}</h3>
+                  <p className="text-slate-400">โซน/ชั้น: <span className="text-white">{selectedEvent.title.replace(/\[.*?\] /, '')}</span></p>
+                </div>
+              </div>
+
+              <div className="space-y-3 bg-slate-800/50 p-4 rounded-xl text-sm">
+                <div className="flex justify-between border-b border-slate-700 pb-2">
+                  <span className="text-slate-400">👨‍🔧 วิศวกร:</span>
+                  <span className="text-slate-200 font-medium">{selectedEvent.engName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-2">
+                  <span className="text-slate-400">📐 ผู้เขียนแบบ:</span>
+                  <span className="text-slate-200 font-medium">{selectedEvent.draftName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-2">
+                  <span className="text-slate-400">⏳ สถานะ:</span>
+                  <span className="text-brand-400 font-medium">{selectedEvent.status}</span>
+                </div>
+                <div className="flex justify-between pt-1">
+                  <span className="text-slate-400">📅 กำหนดส่ง:</span>
+                  <span className={`${selectedEvent.isOverdue ? 'text-red-400 font-bold' : 'text-slate-200'}`}>
+                    {selectedEvent.isOverdue && "🚨 "}
+                    {new Date(selectedEvent.start).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="mt-6 w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+              >
+                ปิดหน้าต่าง
+              </button>
             </div>
           </div>
         )}
 
       </div>
-
-      {/* CREATE PROJECT MODAL */}
-      {isCreateProjectOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden border border-slate-800 animate-scaleUp">
-            <div className="px-6 py-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
-              <h3 className="font-bold text-slate-200">สร้างแบบแปลนและโครงสร้างแผนงาน (Grid Plan)</h3>
-              <button onClick={() => setIsCreateProjectOpen(false)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
-            </div>
-            <form onSubmit={handleCreateProject}>
-              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-left">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">เลขที่โครงการ *</label>
-                    <input type="text" required placeholder="เช่น P2601" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-mono"
-                      value={newProjectNumber} onChange={(e) => setNewProjectNumber(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ชื่อโครงการ *</label>
-                    <input type="text" required placeholder="เช่น โครงการคอนโดมิเนียมแกรนด์แวลลีย์" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200"
-                      value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">วิศวกรผู้ควบคุม</label>
-                    {currentUser?.role === 'engineer' ? (
-                      <input
-                        type="text"
-                        readOnly
-                        className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 font-semibold opacity-80"
-                        value={currentUser.name}
-                      />
-                    ) : (
-                      <select className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350 font-semibold"
-                        value={newEngineerId} onChange={(e) => setNewEngineerId(e.target.value)}>
-                        <option value="">เลือกวิศวกร</option>
-                        {users.filter(u => u.role === 'engineer').map(eng => <option key={eng.id} value={eng.id}>{eng.name}</option>)}
-                      </select>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ผู้จัดทำแบบ (Draftsperson)</label>
-                    <select className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350 font-semibold"
-                      value={newDraftId} onChange={(e) => setNewDraftId(e.target.value)}>
-                      <option value="">เลือกดร๊าฟแบบ</option>
-                      {users.filter(u => u.role === 'draft').map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="p-4 bg-slate-900/40 border border-slate-800 rounded-xl space-y-3">
-                  <label className="block text-xs font-bold text-brand-300 uppercase">รายชื่อชั้น/โซนที่ต้องสร้าง (แยกด้วย , หรือช่วง 1-5) * 1 ชั้น = 1 แผ่นเสมอ</label>
-                  <input type="text" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-bold"
-                    placeholder="1-3, 11, 14-16 หรือ Floor 1, Floor 2"
-                    value={newFloorInputText} onChange={(e) => setNewFloorInputText(e.target.value)} />
-                  <div>
-                    <label className="block text-[10px] text-slate-400 uppercase">กำหนดเดดไลน์ของทุกชั้น (ปล่อยว่างได้)</label>
-                    <input type="date" className="glass-input w-full px-3 py-1.5 rounded text-sm text-slate-300"
-                      value={defaultDeadline} onChange={(e) => setDefaultDeadline(e.target.value)} />
-                  </div>
-                </div>
-              </div>
-              <div className="px-6 py-4 bg-slate-900 border-t border-slate-800 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsCreateProjectOpen(false)} className="px-4 py-2 text-slate-400 text-sm">ยกเลิก</button>
-                <button type="submit" className="px-5 py-2 bg-brand-600 rounded text-white font-bold text-sm">สร้างคิวโครงการ & Grid</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* FLOOR EDIT MODAL */}
-      {isFloorEditOpen && selectedFloor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden border border-slate-800 flex flex-col md:flex-row animate-scaleUp">
-
-            <div className="flex-grow p-6 space-y-4 border-r border-slate-800 text-left">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
-                <h3 className="font-bold text-slate-200 text-base flex items-center gap-2">
-                  <Wrench className="h-5 w-5 text-brand-400" />
-                  แผงจัดการแก้ไขชั้นงานย่อย (Floor Editor)
-                </h3>
-
-                {currentUser && currentUser.role === 'engineer' && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleSoftDeleteFloorZone(selectedFloor.id, e)}
-                    className="p-2 hover:bg-slate-900 border border-transparent hover:border-rose-500 rounded-lg text-slate-400 hover:text-rose-500 transition-all flex items-center gap-1"
-                    title="ลบชั้นย่อยนี้"
-                  >
-                    <Trash2 className="h-4 w-4 animate-fadeIn" /> <span className="text-xs font-bold">ลบชั้นงาน (Soft Delete)</span>
-                  </button>
-                )}
-              </div>
-
-              <form onSubmit={handleUpdateFloorZone} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ชื่อชั้น / โซนร่างแบบ</label>
-                    <input type="text" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200 font-bold"
-                      value={editFloorName} onChange={(e) => setEditFloorName(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">กำหนดเดดไลน์ส่งแบบ</label>
-                    <input type="date" className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-350"
-                      value={editFloorDeadline} onChange={(e) => setEditFloorDeadline(e.target.value)} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">มอบหมายดร๊าฟผู้รับผิดชอบ</label>
-                    {currentUser && currentUser.role === 'draft' ? (
-                      <input
-                        type="text"
-                        readOnly
-                        className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 opacity-80"
-                        value={users.find(u => u.id === parseInt(editAssignedDraftId || editFloorProjectDraftId, 10))?.name || 'ไม่ระบุ'}
-                      />
-                    ) : (
-                      <select
-                        className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-300 font-semibold"
-                        value={editAssignedDraftId}
-                        onChange={(e) => setEditAssignedDraftId(e.target.value)}
-                      >
-                        <option value="">ใช้ดร๊าฟเดิมของโครงการ</option>
-                        {users.filter(u => u.role === 'draft').map(dr => (
-                          <option key={dr.id} value={dr.id}>{dr.name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">ปรับเปลี่ยนตามช่วงสถานะงานคิว (Status Flow)</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {STATUS_FLOW.map(st => {
-                      const isActive = editFloorStatus === st;
-                      return (
-                        <button key={st} type="button" onClick={() => setEditFloorStatus(st)}
-                          className={`px-3 py-2 rounded-lg text-xs font-bold transition-all border ${isActive ? 'bg-brand-600 border-brand-500 text-white shadow' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'}`}>
-                          {st}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">หมายเหตุเพิ่มเติม</label>
-                  <textarea
-                    rows="2"
-                    className="glass-input w-full px-3 py-2 rounded-lg text-sm text-slate-200"
-                    value={editFloorNotes}
-                    onChange={(e) => setEditFloorNotes(e.target.value)}
-                    readOnly={currentUser && currentUser.role === 'draft'}
-                  ></textarea>
-                  {currentUser && currentUser.role === 'draft' && (
-                    <p className="text-[10px] text-amber-400 mt-1">สถานะ Draft ดู Note ได้อย่างเดียว ไม่สามารถแก้ไขได้</p>
-                  )}
-                </div>
-
-                <div className="flex justify-end gap-3 pt-4">
-                  <button type="button" onClick={() => setIsFloorEditOpen(false)} className="px-4 py-2 text-slate-400 text-sm">ยกเลิก</button>
-                  <button type="submit" className="px-5 py-2 bg-brand-600 rounded text-white font-bold text-sm">บันทึกการเปลี่ยนแปลง</button>
-                </div>
-              </form>
-            </div>
-
-            {/* Audit History Log */}
-            <div className="w-full md:w-80 p-6 bg-slate-950 flex flex-col max-h-[85vh] overflow-y-auto text-left">
-              <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-3">ประวัติความคืบหน้า (Audit Trail)</h3>
-              <div className="space-y-4">
-                {floorHistory.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic py-8 text-center">ไม่มีบันทึกประวัติก่อนหน้านี้</p>
-                ) : (
-                  floorHistory.map(log => (
-                    <div key={log.id} className="relative pl-5 border-l border-slate-850 pb-2">
-                      <div className="absolute top-1 -left-1.5 h-3 w-3 rounded-full bg-brand-500 border-2 border-slate-950"></div>
-                      <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-[11px]">
-                        <span className="font-bold text-slate-300 block">{log.changedByUser?.name || 'ระบบอัตโนมัติ'}</span>
-                        <div className="flex items-center gap-1.5 font-bold text-brand-300 mt-1">
-                          {log.oldStatus && <span className="text-slate-400 font-normal">{log.oldStatus} ➡️ </span>}
-                          <span>{log.newStatus}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* CREATE USER MODAL (ADMIN ONLY) */}
-      {isCreateUserOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-md rounded-2xl p-6 border border-slate-800 animate-scaleUp text-left">
-            <div className="flex justify-between items-center border-b border-slate-850 pb-2.5 mb-4">
-              <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
-                <UserPlus className="h-4.5 w-4.5 text-brand-400" /> สร้างรายชื่อผู้ใช้งานใหม่
-              </h3>
-              <button onClick={() => setIsCreateUserOpen(false)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
-            </div>
-            <form onSubmit={handleCreateUser} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุลผู้ใช้</label>
-                <input
-                  type="text" required placeholder="เช่น ศุภฤกษ์ ตรงจิตสุนทร"
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
-                  value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลทางการ</label>
-                <input
-                  type="email" required placeholder="name@syncdraft.com"
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
-                  value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">รหัสผ่านเริ่มต้น</label>
-                <input
-                  type="password" required placeholder="••••••"
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
-                  value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
-                <select
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
-                  value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
-                >
-                  <option value="engineer">วิศวกร (Engineer)</option>
-                  <option value="draft">ดร๊าฟแบบ (Draftsperson)</option>
-                  <option value="admin">ผู้ดูแลระบบ (Admin)</option>
-                </select>
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setIsCreateUserOpen(false)} className="px-4 py-2 text-slate-400 text-xs">ยกเลิก</button>
-                <button type="submit" className="px-4 py-2 bg-brand-600 rounded text-white font-bold text-xs">ยืนยันสร้างบัญชี</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* EDIT USER / PASSWORD MODAL (ADMIN ONLY) */}
-      {isEditUserOpen && selectedUserForEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-md rounded-2xl p-6 border border-slate-800 animate-scaleUp text-left">
-            <div className="flex justify-between items-center border-b border-slate-850 pb-2.5 mb-4">
-              <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
-                <KeyRound className="h-4.5 w-4.5 text-brand-400" /> แก้ไขโปรไฟล์ / สั่งรีเซ็ตรหัสผ่าน
-              </h3>
-              <button onClick={() => { setIsEditUserOpen(false); setSelectedUserForEdit(null); }} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
-            </div>
-            <form onSubmit={handleEditUserSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">ชื่อ-นามสกุล</label>
-                <input
-                  type="text" required
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200"
-                  value={userFormName} onChange={(e) => setUserFormName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">อีเมลผู้ใช้งาน</label>
-                <input
-                  type="email" required
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 font-mono"
-                  value={userFormEmail} onChange={(e) => setUserFormEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">เปลี่ยนรหัสผ่าน (กรอกเฉพาะเมื่อต้องการตั้งใหม่)</label>
-                <input
-                  type="password" placeholder="ว่างไว้หากใช้รหัสเดิม"
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-200 animate-fadeIn"
-                  value={userFormPassword} onChange={(e) => setUserFormPassword(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">บทบาทหน้าที่ (Role)</label>
-                <select
-                  className="glass-input w-full px-3 py-2 rounded-lg text-xs text-slate-300 font-semibold"
-                  value={userFormRole} onChange={(e) => setUserFormRole(e.target.value)}
-                >
-                  <option value="engineer">วิศวกร (Engineer)</option>
-                  <option value="draft">ดร๊าฟแบบ (Draftsperson)</option>
-                  <option value="admin">ผู้ดูแลระบบ (Admin)</option>
-                </select>
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => { setIsEditUserOpen(false); setSelectedUserForEdit(null); }} className="px-4 py-2 text-slate-400 text-xs">ยกเลิก</button>
-                <button type="submit" className="px-4 py-2 bg-brand-600 rounded text-white font-bold text-xs">บันทึกข้อมูล</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* ========================================= */}
-      {/* MODAL: ดูรายละเอียดงานในปฏิทิน (ข้อ 3) */}
-      {/* ========================================= */}
-      {selectedEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
-            <button
-              onClick={() => setSelectedEvent(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white"
-            >
-              ✕
-            </button>
-
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 rounded-xl bg-brand-500/20 text-brand-400">
-                <Calendar className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-white">{selectedEvent.projectName}</h3>
-                <p className="text-slate-400">โซน/ชั้น: <span className="text-white">{selectedEvent.title.replace(/\[.*?\] /, '')}</span></p>
-              </div>
-            </div>
-
-            <div className="space-y-3 bg-slate-800/50 p-4 rounded-xl text-sm">
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span className="text-slate-400">👨‍🔧 วิศวกร:</span>
-                <span className="text-slate-200 font-medium">{selectedEvent.engName}</span>
-              </div>
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span className="text-slate-400">📐 ผู้เขียนแบบ:</span>
-                <span className="text-slate-200 font-medium">{selectedEvent.draftName}</span>
-              </div>
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span className="text-slate-400">⏳ สถานะ:</span>
-                <span className="text-brand-400 font-medium">{selectedEvent.status}</span>
-              </div>
-              <div className="flex justify-between pt-1">
-                <span className="text-slate-400">📅 กำหนดส่ง:</span>
-                <span className={`${selectedEvent.isOverdue ? 'text-red-400 font-bold' : 'text-slate-200'}`}>
-                  {selectedEvent.isOverdue && "🚨 "}
-                  {new Date(selectedEvent.start).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
-                </span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setSelectedEvent(null)}
-              className="mt-6 w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
-            >
-              ปิดหน้าต่าง
-            </button>
-          </div>
-        </div>
-      )}
-
-    </div> // นี่คือแท็กปิด </div> สุดท้ายของ <div className="min-h-screen...">
-  );
-}
-export default App;
-    </div >
+    </div>
   );
 }

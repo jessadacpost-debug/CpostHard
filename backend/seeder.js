@@ -39,7 +39,7 @@ async function seed() {
       { name: 'โรเบิร์ต อิกเนทิอัส ชไรเนอร์', email: 'robert@syncdraft.com', role: 'draft', password: '123456' },
       { name: 'นัฐกรณ์ มีศรี', email: 'natthakorn@syncdraft.com', role: 'draft', password: '123456' },
       // Admin Account
-      { name: 'ผู้ดูแลระบบ (Admin)', email: 'admin@syncdraft.com', role: 'admin', password: 'admin123' },
+      { name: 'ผู้ดูแลระบบ (Admin)', email: 'admin@syncdraft.com', role: 'admin', password: '123' },
     ];
 
     const usersToCreate = rawUsers.map(u => {
